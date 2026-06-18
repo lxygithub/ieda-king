@@ -1,0 +1,503 @@
+import 'dart:io';
+
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:intl/intl.dart';
+import 'package:open_filex/open_filex.dart';
+import 'package:photo_view/photo_view.dart';
+import 'package:provider/provider.dart';
+import 'package:share_plus/share_plus.dart';
+
+import '../l10n/app_localizations.dart';
+import '../models/shared_file.dart';
+import '../providers/timeline_provider.dart';
+import '../utils/file_handler.dart';
+
+class DetailScreen extends StatefulWidget {
+  final SharedFile file;
+
+  const DetailScreen({super.key, required this.file});
+
+  @override
+  State<DetailScreen> createState() => _DetailScreenState();
+}
+
+class _DetailScreenState extends State<DetailScreen> {
+  String? _textPreview;
+  bool _previewLoading = true;
+  late TextEditingController _descCtrl;
+  late List<String> _tags;
+
+  @override
+  void initState() {
+    super.initState();
+    _descCtrl = TextEditingController(text: widget.file.description ?? '');
+    _tags = List.from(widget.file.tags);
+    _loadPreview();
+  }
+
+  @override
+  void dispose() {
+    _descCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadPreview() async {
+    final txt = await FileHandler.readTextPreview(widget.file);
+    if (mounted) {
+      setState(() {
+        _textPreview = txt;
+        _previewLoading = false;
+      });
+    }
+  }
+
+  void _saveDescription() {
+    context
+        .read<TimelineProvider>()
+        .updateDescription(widget.file.id, _descCtrl.text.trim());
+  }
+
+  void _saveTags() {
+    context.read<TimelineProvider>().updateTags(widget.file.id, _tags);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final f = widget.file;
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(f.name, overflow: TextOverflow.ellipsis),
+        actions: [
+          IconButton(
+              icon: const Icon(Icons.share),
+              tooltip: AppLocalizations.of(context).share,
+              onPressed: () => _shareFile(f)),
+          IconButton(
+              icon: const Icon(Icons.delete_outline),
+              tooltip: AppLocalizations.of(context).delete,
+              onPressed: () => _confirmDelete(f)),
+        ],
+      ),
+      body: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _buildPreview(theme, f),
+            _buildTagSection(theme, f),
+            _buildDescriptionSection(theme, f),
+            const Divider(),
+            _buildOpenSection(theme, f),
+            const Divider(),
+            _buildMetadata(theme, f),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ======== Preview ========
+
+  Widget _buildPreview(ThemeData theme, SharedFile f) {
+    switch (f.type) {
+      case SharedFileType.image:
+        return _buildImagePreview(f);
+      case SharedFileType.text:
+      case SharedFileType.document:
+        return _buildTextPreview(theme);
+      default:
+        return const SizedBox.shrink();
+    }
+  }
+
+  Widget _buildImagePreview(SharedFile f) {
+    if (f.localPath == null) return _noPreview();
+    final file = File(f.localPath!);
+    if (!file.existsSync()) return _noPreview();
+
+    return SizedBox(
+      height: 360,
+      child: GestureDetector(
+        onTap: () => _showOpenSheet(f),
+        child: PhotoView(
+          imageProvider: FileImage(file),
+          minScale: PhotoViewComputedScale.contained,
+          maxScale: PhotoViewComputedScale.covered * 3,
+          backgroundDecoration: BoxDecoration(
+            color: Theme.of(context).scaffoldBackgroundColor,
+          ),
+          loadingBuilder: (_, __) => const Center(
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+          errorBuilder: (_, __, ___) => _noPreview(),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTextPreview(ThemeData theme) {
+    if (_previewLoading) {
+      return const Padding(
+        padding: EdgeInsets.all(32),
+        child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+      );
+    }
+    if (_textPreview == null) return _noPreview();
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      constraints: const BoxConstraints(maxHeight: 320),
+      child: SelectableText(
+        _textPreview!,
+        style: theme.textTheme.bodyMedium
+            ?.copyWith(fontFamily: 'monospace', height: 1.5),
+      ),
+    );
+  }
+
+
+  // ======== Tags ========
+
+  Widget _buildTagSection(ThemeData theme, SharedFile f) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text(AppLocalizations.of(context).tagLabel, style: theme.textTheme.titleSmall),
+              const Spacer(),
+              TextButton.icon(
+                icon: const Icon(Icons.edit, size: 16),
+                label: Text(AppLocalizations.of(context).manage),
+                onPressed: () => _showTagEditor(f),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          _tags.isEmpty
+              ? Text(AppLocalizations.of(context).noTag, style: theme.textTheme.bodySmall
+                  ?.copyWith(color: theme.colorScheme.onSurfaceVariant))
+              : Wrap(
+                  spacing: 6,
+                  runSpacing: 4,
+                  children: _tags.map((t) => Chip(
+                    label: Text(t, style: const TextStyle(fontSize: 12)),
+                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    visualDensity: VisualDensity.compact,
+                    deleteIcon: const Icon(Icons.close, size: 14),
+                    onDeleted: () {
+                      setState(() => _tags.remove(t));
+                      _saveTags();
+                    },
+                  )).toList(),
+                ),
+        ],
+      ),
+    );
+  }
+
+  void _showTagEditor(SharedFile f) {
+    final ctrl = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(AppLocalizations.of(context).addTag),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: ctrl,
+              autofocus: true,
+              decoration: InputDecoration(
+                hintText: AppLocalizations.of(context).tagHint,
+                border: const OutlineInputBorder(),
+              ),
+              onSubmitted: (val) {
+                final tag = val.trim();
+                if (tag.isNotEmpty && !_tags.contains(tag)) {
+                  setState(() => _tags.add(tag));
+                  _saveTags();
+                }
+                ctrl.clear();
+              },
+            ),
+            if (_tags.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 6,
+                runSpacing: 4,
+                children: _tags.map((t) => Chip(
+                  label: Text(t, style: const TextStyle(fontSize: 12)),
+                  onDeleted: () {
+                    setState(() => _tags.remove(t));
+                    _saveTags();
+                  },
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  visualDensity: VisualDensity.compact,
+                )).toList(),
+              ),
+            ],
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(AppLocalizations.of(context).done),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ======== Description ========
+
+  Widget _buildDescriptionSection(ThemeData theme, SharedFile f) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(AppLocalizations.of(context).descriptionLabel, style: theme.textTheme.titleSmall),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _descCtrl,
+            maxLines: 3,
+            minLines: 1,
+            decoration: InputDecoration(
+              hintText: AppLocalizations.of(context).addDescription,
+              border: const OutlineInputBorder(),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              suffixIcon: IconButton(
+                icon: const Icon(Icons.check, size: 18),
+                onPressed: _saveDescription,
+              ),
+            ),
+            onChanged: (_) => _saveDescription(),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ======== Open section ========
+
+  Widget _buildOpenSection(ThemeData theme, SharedFile f) {
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(AppLocalizations.of(context).openWith, style: theme.textTheme.titleSmall),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 12,
+            runSpacing: 8,
+            children: [
+              _actionChip(
+                  icon: Icons.open_in_new, label: '系统应用',
+                  onTap: () => _openExternal(f)),
+              _actionChip(
+                  icon: Icons.share, label: AppLocalizations.of(context).share,
+                  onTap: () => _shareFile(f)),
+              if (f.type == SharedFileType.text || f.textContent != null)
+                _actionChip(
+                    icon: Icons.content_copy, label: '复制文本',
+                    onTap: () => _copyText(f)),
+              _actionChip(
+                  icon: Icons.content_paste, label: AppLocalizations.of(context).copyPath,
+                  onTap: () => _copyPath(f)),
+            ],
+          ),
+          const SizedBox(height: 8),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              icon: const Icon(Icons.open_in_new, size: 18),
+              label: Text(AppLocalizations.of(context).chooseApp),
+              onPressed: () => _openExternal(f),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _actionChip(
+      {required IconData icon, required String label, required VoidCallback onTap}) {
+    return ActionChip(
+        avatar: Icon(icon, size: 18), label: Text(label), onPressed: onTap);
+  }
+
+  // ======== Actions ========
+
+  void _showOpenSheet(SharedFile f) {
+    showModalBottomSheet(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              child: Text(AppLocalizations.of(context).openWith, style: Theme.of(ctx).textTheme.titleSmall),
+            ),
+            ListTile(
+              leading: const Icon(Icons.open_in_new),
+              title: Text(AppLocalizations.of(context).chooseApp),
+              subtitle: Text(AppLocalizations.of(context).systemApp),
+              onTap: () { Navigator.pop(ctx); _openExternal(f); },
+            ),
+            ListTile(
+              leading: const Icon(Icons.share), title: const Text('分享'),
+              subtitle: const Text('通过系统分享发送'),
+              onTap: () { Navigator.pop(ctx); _shareFile(f); },
+            ),
+            if (f.type == SharedFileType.text || f.textContent != null)
+              ListTile(
+                leading: const Icon(Icons.content_copy), title: const Text('复制内容'),
+                onTap: () { Navigator.pop(ctx); _copyText(f); },
+              ),
+            ListTile(
+              leading: const Icon(Icons.content_paste), title: const Text('复制文件路径'),
+              onTap: () { Navigator.pop(ctx); _copyPath(f); },
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openExternal(SharedFile f) async {
+    if (f.localPath == null) { _showSnack('文件路径为空'); return; }
+    final result = await OpenFilex.open(f.localPath!);
+    if (result.type != ResultType.done && mounted) {
+      _showSnack('打开失败: ${result.message}');
+    }
+  }
+
+  Future<void> _shareFile(SharedFile f) async {
+    if (f.localPath != null) {
+      await Share.shareXFiles([XFile(f.localPath!)], text: f.name);
+    } else if (f.textContent != null) {
+      await Share.share(f.textContent!, subject: f.name);
+    } else {
+      _showSnack('无可分享的内容');
+    }
+  }
+
+  Future<void> _copyText(SharedFile f) async {
+    final content = f.textContent ?? _textPreview;
+    if (content == null || content.isEmpty) { _showSnack('无文本内容可复制'); return; }
+    await Clipboard.setData(ClipboardData(text: content));
+    if (mounted) _showSnack('文本已复制到剪贴板');
+  }
+
+  Future<void> _copyPath(SharedFile f) async {
+    if (f.localPath == null) { _showSnack('无文件路径'); return; }
+    await Clipboard.setData(ClipboardData(text: f.localPath!));
+    if (mounted) _showSnack('路径已复制');
+  }
+
+  void _showSnack(String msg) {
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(msg), duration: const Duration(seconds: 2)));
+  }
+
+  // ======== Metadata ========
+
+  Widget _buildMetadata(ThemeData theme, SharedFile f) {
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(AppLocalizations.of(context).detailInfo, style: theme.textTheme.titleSmall),
+          const SizedBox(height: 12),
+          _metaRow(theme, AppLocalizations.of(context).fileName, f.name),
+          _metaRow(theme, AppLocalizations.of(context).fileType, f.type.label),
+          if (f.mimeType != null) _metaRow(theme, 'MIME', f.mimeType!),
+          if (f.fileSize > 0) _metaRow(theme, AppLocalizations.of(context).fileSize, _formatSize(f.fileSize)),
+          _metaRow(theme, AppLocalizations.of(context).receiveTime,
+              DateFormat('yyyy-MM-dd HH:mm:ss').format(f.receivedAt)),
+          if (f.localPath != null)
+            _metaRow(theme, AppLocalizations.of(context).localPath, f.localPath!, maxLines: 2),
+          if (f.sourceUri != null) _metaRow(theme, AppLocalizations.of(context).source, f.sourceUri!),
+        ],
+      ),
+    );
+  }
+
+  Widget _metaRow(ThemeData theme, String label, String value,
+      {int maxLines = 1}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 80,
+            child: Text(label,
+                style: theme.textTheme.bodySmall
+                    ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+          ),
+          Expanded(
+            child: InkWell(
+              onLongPress: () {
+                Clipboard.setData(ClipboardData(text: value));
+                _showSnack('已复制');
+              },
+              child: Text(value,
+                  maxLines: maxLines,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.bodyMedium),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _noPreview() {
+    return Container(
+      height: 200,
+      alignment: Alignment.center,
+      child: Icon(Icons.broken_image_outlined, size: 48, color: Colors.grey[400]),
+    );
+  }
+
+
+  Future<void> _confirmDelete(SharedFile f) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(AppLocalizations.of(context).deleteRecord),
+        content: Text(AppLocalizations.of(context).deleteConfirm(f.name)),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text(AppLocalizations.of(context).cancel)),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              style: TextButton.styleFrom(foregroundColor: Colors.red),
+              child: Text(AppLocalizations.of(context).delete)),
+        ],
+      ),
+    );
+    if (ok == true && mounted) {
+      context.read<TimelineProvider>().deleteFile(f);
+      Navigator.pop(context);
+    }
+  }
+
+  String _formatSize(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+  }
+}
