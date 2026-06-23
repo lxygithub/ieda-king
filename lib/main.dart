@@ -6,12 +6,24 @@ import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 import 'l10n/app_localizations.dart';
 import 'providers/timeline_provider.dart';
 import 'screens/timeline_screen.dart';
+import 'services/remote_db_service.dart';
 import 'services/s3_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await _initS3();
+  await _initMySQL();
   runApp(const ShareTimelineApp());
+}
+
+Future<void> _initMySQL() async {
+  await RemoteDbService.saveConfig(const MySQLConfig(
+      host: '192.227.212.20',
+      port: 15639,
+      user: 'root',
+      password: 'mysql_ktXzzs',
+      database: 'idea_king',
+    ));
 }
 
 Future<void> _initS3() async {

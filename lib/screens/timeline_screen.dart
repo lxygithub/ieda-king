@@ -10,6 +10,7 @@ import '../widgets/day_group.dart';
 import '../widgets/draggable_fab.dart';
 import '../widgets/file_card_grid.dart';
 import 'detail_screen.dart';
+import 'settings_screen.dart';
 
 class TimelineScreen extends StatefulWidget {
   const TimelineScreen({super.key});
@@ -128,11 +129,22 @@ class _TimelineScreenState extends State<TimelineScreen> {
         actions: [
           Consumer<TimelineProvider>(
             builder: (_, provider, __) {
-              if (provider.files.isEmpty || _showSearch) return const SizedBox.shrink();
-              return IconButton(
-                icon: Icon(_isGridView ? Icons.view_list : Icons.grid_view),
-                tooltip: _isGridView ? AppLocalizations.of(context).listView : AppLocalizations.of(context).gridView,
-                onPressed: _toggleView,
+              if (_showSearch) return const SizedBox.shrink();
+              return Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (provider.files.isNotEmpty)
+                    IconButton(
+                      icon: Icon(_isGridView ? Icons.view_list : Icons.grid_view),
+                      tooltip: _isGridView ? AppLocalizations.of(context).listView : AppLocalizations.of(context).gridView,
+                      onPressed: _toggleView,
+                    ),
+                  IconButton(
+                    icon: const Icon(Icons.settings_outlined),
+                    tooltip: '设置',
+                    onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SettingsScreen())),
+                  ),
+                ],
               );
             },
           ),
@@ -152,10 +164,16 @@ class _TimelineScreenState extends State<TimelineScreen> {
                     if (provider.isSearching || provider.hasTypeFilter)
                       _buildSearchBar(theme, provider),
                     _buildTypeFilter(theme, provider),
+                    _buildFailedBanner(theme, provider),
                     Expanded(
-                      child: _isGridView
-                          ? _buildGridTimeline(provider, provider.searchQuery)
-                          : _buildListTimeline(provider, provider.searchQuery),
+                      child: RefreshIndicator(
+                        onRefresh: () async {
+                          context.read<TimelineProvider>().retryAllFailed();
+                        },
+                        child: _isGridView
+                            ? _buildGridTimeline(provider, provider.searchQuery)
+                            : _buildListTimeline(provider, provider.searchQuery),
+                      ),
                     ),
                   ],
                 ),
@@ -258,6 +276,28 @@ class _TimelineScreenState extends State<TimelineScreen> {
   }
 
   // ===== Type filter =====
+
+  Widget _buildFailedBanner(ThemeData theme, TimelineProvider provider) {
+    final failed = provider.files.where((f) => f.s3Key == null && (f.uploadError != null || f.uploadProgress != null)).length;
+    if (failed == 0) return const SizedBox.shrink();
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      child: Row(
+        children: [
+          const Icon(Icons.cloud_off, size: 14, color: Colors.orange),
+          const SizedBox(width: 6),
+          Text('$failed 个文件上传失败',
+              style: theme.textTheme.bodySmall?.copyWith(color: Colors.orange)),
+          const Spacer(),
+          TextButton(
+            onPressed: () => context.read<TimelineProvider>().retryAllFailed(),
+            child: const Text('重试全部', style: TextStyle(fontSize: 12)),
+          ),
+        ],
+      ),
+    );
+  }
 
   Widget _buildTypeFilter(ThemeData theme, TimelineProvider provider) {
     return Container(
@@ -394,10 +434,6 @@ class _TimelineScreenState extends State<TimelineScreen> {
       label = l10n.today;
     } else if (diff == 1) {
       label = l10n.yesterday;
-    } else if (diff == 2) {
-      label = l10n.dayBefore;
-    } else if (diff < 7) {
-      label = l10n.daysAgo(diff);
     } else {
       label = l10n.formatDate(date);
     }

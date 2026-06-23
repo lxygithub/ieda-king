@@ -199,9 +199,28 @@ class FileCard extends StatelessWidget {
   }
 
   Widget _uploadProgress(ThemeData theme) {
-    return const Padding(
-      padding: EdgeInsets.only(left: 6),
-      child: SizedBox(width: 12, height: 12, child: CircularProgressIndicator(strokeWidth: 2)),
+    final pct = (file.uploadProgress! * 100).toInt().clamp(0, 100);
+    return Padding(
+      padding: const EdgeInsets.only(left: 6),
+      child: SizedBox(
+        width: 48,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(2),
+              child: LinearProgressIndicator(
+                value: file.uploadProgress,
+                minHeight: 4,
+                backgroundColor: theme.colorScheme.surfaceContainerHighest,
+              ),
+            ),
+            Text('$pct%',
+                style: theme.textTheme.labelSmall?.copyWith(
+                    fontSize: 8, color: theme.colorScheme.primary)),
+          ],
+        ),
+      ),
     );
   }
 

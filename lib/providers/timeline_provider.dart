@@ -6,6 +6,8 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/shared_file.dart';
+import '../services/database_service.dart';
+import '../services/remote_db_service.dart';
 import '../services/s3_service.dart';
 import '../utils/file_handler.dart';
 
@@ -217,68 +219,106 @@ class TimelineProvider extends ChangeNotifier {
   // ===== S3 Sync =====
 
   Future<void> _uploadToS3(SharedFile file) async {
-    if (file.localPath == null || file.textContent != null) return;
-    if (file.s3Key != null) return; // already uploaded
-    final s3 = S3Service();
-    await s3.loadConfig();
-    if (!s3.isConfigured) return;
-
+    debugPrint('[S3] _uploadToS3: id=${file.id} path=${file.localPath} s3Key=${file.s3Key} error=${file.uploadError}');
     final idx = _files.indexWhere((f) => f.id == file.id);
     if (idx == -1) return;
 
-    // Mark as uploading
-    _files[idx] = _files[idx].copyWith(uploadProgress: 0.01, uploadError: null);
-    notifyListeners();
+    // If has s3Key but error, retry upload (s3Key might be stale)
+    if (file.s3Key != null && file.uploadError != null) {
+      debugPrint('[S3] retrying upload for ${file.id} (had error, s3Key=${file.s3Key})');
+      // Don't return — fall through to re-upload
+    } else if (file.s3Key != null) {
+      debugPrint('[S3] skip: already uploaded without error');
+      return;
+    }
 
-    // Generate content-hash-based S3 key for dedup
-    final fileBytes = await File(file.localPath!).readAsBytes();
-    final hash = sha256.convert(fileBytes).toString();
-    final s3Key = 'files/$hash';
-    try {
-      // Check if same content already exists on S3
-      if (await s3.fileExists(s3Key)) {
-        _files[idx] = _files[idx].copyWith(
-          s3Key: s3Key,
-          uploadProgress: null,
-          uploadError: null,
-        );
-        await _persist();
+    // For text-only files, recreate local file from textContent if missing
+    String? uploadPath = file.localPath;
+    if (uploadPath == null || !File(uploadPath).existsSync()) {
+      if (file.textContent != null && uploadPath != null) {
+        File(uploadPath).parent.createSync(recursive: true);
+        File(uploadPath).writeAsStringSync(file.textContent!, flush: true);
+        debugPrint('[S3] recreated text file at $uploadPath');
+      } else {
+        debugPrint('[S3] cannot upload: file missing and no text content');
+        _files[idx] = _files[idx].copyWith(clearUploadProgress: true, uploadError: '源文件已删除');
         notifyListeners();
         return;
       }
-      final uploadedKey = await s3.uploadFile(file.localPath!, s3Key: s3Key);
-      if (uploadedKey != null) {
-        _files[idx] = _files[idx].copyWith(
-          s3Key: uploadedKey,
-          uploadProgress: null,
-          uploadError: null,
-        );
-      } else {
-        _files[idx] = _files[idx].copyWith(
-          uploadProgress: null,
-          uploadError: '上传失败',
-        );
+    }
+
+    final s3 = S3Service();
+    await s3.loadConfig();
+    if (!s3.isConfigured) { debugPrint('[S3] skip: not configured'); return; }
+
+    // Compute content hash for dedup key
+    final uploadFile = File(uploadPath);
+    final bytes = await uploadFile.readAsBytes();
+    final hash = sha256.convert(bytes).toString();
+    // Sanitize filename: ASCII only, strip special chars, limit length
+    final safeName = file.name
+        .replaceAll(RegExp(r'[<>:"/\\|?*]'), '_')
+        .replaceAll(RegExp(r'\s+'), '_')
+        .replaceAll(RegExp(r'[^\x20-\x7E]'), '_');
+    final truncated = safeName.length > 60 ? safeName.substring(0, 60) : safeName;
+    final s3Key = 'files/$hash/$truncated';
+
+    // Mark as uploading
+    _files[idx] = _files[idx].copyWith(uploadProgress: 0.01, clearUploadError: true);
+    notifyListeners();
+
+    // Check if same content already exists on S3 (GET Range is reliable)
+    try {
+      if (await s3.fileExists(s3Key)) {
+        debugPrint('[S3] file already on S3, skipping upload');
+        _files[idx] = _files[idx].copyWith(s3Key: s3Key, clearUploadProgress: true, clearUploadError: true);
+        notifyListeners();
+        await DatabaseService.updateFile(_files[idx]);
+        RemoteDbService.upsertFile(_files[idx]);
+        return;
       }
-    } catch (e) {
-      _files[idx] = _files[idx].copyWith(
-        uploadProgress: null,
-        uploadError: '上传异常: $e',
+    } catch (_) {
+      debugPrint('[S3] fileExists check failed, proceeding with upload');
+    }
+
+    try {
+      double lastNotified = 0;
+      final uploadedKey = await s3.uploadFile(
+        uploadPath,
+        s3Key: s3Key,
+        onProgress: (p) {
+          _files[idx] = _files[idx].copyWith(uploadProgress: p);
+          if (p >= 1.0 || p - lastNotified >= 0.05 || lastNotified == 0) {
+            lastNotified = p;
+            notifyListeners();
+          }
+        },
       );
+      if (uploadedKey != null) {
+        _files[idx] = _files[idx].copyWith(s3Key: uploadedKey, clearUploadProgress: true, clearUploadError: true);
+      } else {
+        _files[idx] = _files[idx].copyWith(clearUploadProgress: true, uploadError: '上传失败');
+      }
+      notifyListeners(); // hide progress bar immediately
+    } catch (e) {
+      _files[idx] = _files[idx].copyWith(clearUploadProgress: true, uploadError: '上传异常: $e');
+      notifyListeners();
     }
     await _persist();
-    notifyListeners();
   }
 
   /// Upload all existing files that don't have an s3Key yet
   void _uploadPendingFiles() {
+    debugPrint('[S3] _uploadPendingFiles called');
     final s3 = S3Service();
     s3.loadConfig().then((_) {
+      debugPrint('[S3] loadConfig done, configured=${s3.isConfigured}');
       if (!s3.isConfigured) return;
+      debugPrint('[S3] checking ${_files.length} files for upload');
       for (final f in _files) {
-        if (f.s3Key != null) continue;
-        if (f.localPath == null || f.textContent != null) continue;
-        if (!File(f.localPath!).existsSync()) continue;
-        // Fire and forget
+        if (f.s3Key != null) { debugPrint('[S3] skip ${f.id}: already has s3Key'); continue; }
+        if (f.localPath == null) { debugPrint('[S3] skip ${f.id}: no local path'); continue; }
+        debugPrint('[S3] uploading ${f.id} (${f.name})');
         _uploadToS3(f);
       }
     });
@@ -300,6 +340,15 @@ class TimelineProvider extends ChangeNotifier {
     }
   }
 
+  /// Retry files stuck with uploadProgress but no s3Key
+  void _retryStuckFiles() {
+    for (final f in _files) {
+      if (f.s3Key == null && f.uploadProgress != null && f.localPath != null) {
+        _uploadToS3(f);
+      }
+    }
+  }
+
   /// Retry uploading a failed file
   Future<void> retryUpload(String fileId) async {
     final idx = _files.indexWhere((f) => f.id == fileId);
@@ -307,10 +356,10 @@ class TimelineProvider extends ChangeNotifier {
     await _uploadToS3(_files[idx]);
   }
 
-  /// Retry all failed uploads
+  /// Retry all failed or stuck uploads
   Future<void> retryAllFailed() async {
     for (final f in _files) {
-      if (f.uploadError != null && f.s3Key == null) {
+      if (f.s3Key == null && (f.uploadError != null || f.uploadProgress != null)) {
         await _uploadToS3(f);
       }
     }
@@ -319,9 +368,17 @@ class TimelineProvider extends ChangeNotifier {
   // ===== Persistence =====
 
   Future<void> _persist() async {
-    final prefs = await SharedPreferences.getInstance();
-    final json = jsonEncode(_files.map((f) => f.toJson()).toList());
-    await prefs.setString('timeline_files', json);
+    final existing = await DatabaseService.loadFiles();
+    final existingIds = existing.map((e) => e.id).toSet();
+    for (final f in _files) {
+      if (existingIds.contains(f.id)) {
+        await DatabaseService.updateFile(f);
+      } else {
+        await DatabaseService.insertFile(f);
+      }
+      // Sync to MySQL (fire-and-forget)
+      RemoteDbService.upsertFile(f);
+    }
   }
 
   Future<void> loadFromDisk() async {
@@ -329,26 +386,25 @@ class TimelineProvider extends ChangeNotifier {
     _loading = true;
     notifyListeners();
     try {
+      // Migrate from SharedPreferences to SQLite (one-time)
       final prefs = await SharedPreferences.getInstance();
-      final json = prefs.getString('timeline_files');
-      if (json != null) {
-        final list = jsonDecode(json) as List;
-        _files = list
-            .map((e) => SharedFile.fromJson(e as Map<String, dynamic>))
-            .where((f) {
-          if (f.localPath != null && f.textContent == null) {
-            if (File(f.localPath!).existsSync()) return true;
-            // Local file missing — try S3 if we have an s3Key
-            if (f.s3Key != null) return true;
-            return false;
+      final oldJson = prefs.getString('timeline_files');
+      if (oldJson != null) {
+        final existing = await DatabaseService.loadFiles();
+        if (existing.isEmpty) {
+          final list = jsonDecode(oldJson) as List;
+          for (final e in list) {
+            final f = SharedFile.fromJson(e as Map<String, dynamic>);
+            await DatabaseService.insertFile(f);
           }
-          return true;
-        }).toList();
-        _files.sort((a, b) => b.receivedAt.compareTo(a.receivedAt));
+          debugPrint('[DB] migrated ${list.length} files from SharedPrefs to SQLite');
+        }
+        await prefs.remove('timeline_files');
       }
-      // Upload existing files that haven't been synced yet
+      _files = await DatabaseService.loadFiles();
+      debugPrint('[S3] loadFromDisk: ${_files.length} files loaded');
       _uploadPendingFiles();
-      // Try to restore missing files from S3
+      _retryStuckFiles();
       _restoreFromS3();
     } finally {
       _initialized = true;
@@ -357,18 +413,32 @@ class TimelineProvider extends ChangeNotifier {
     }
   }
 
-  // ===== Delete (record only, keep local files) =====
+  // ===== Delete =====
 
   Future<void> deleteFile(SharedFile file) async {
     _files.removeWhere((f) => f.id == file.id);
-    await _persist();
+    await DatabaseService.deleteFile(file.id);
+    RemoteDbService.deleteFile(file.id);
     notifyListeners();
   }
 
   Future<void> clearAll() async {
     _files.clear();
-    await _persist();
+    await DatabaseService.clearAll();
+    RemoteDbService.clearAll();
     notifyListeners();
+  }
+
+  /// Clear all s3Key values so files get re-uploaded on next sync
+  Future<void> resetUploadStatus() async {
+    for (int i = 0; i < _files.length; i++) {
+      _files[i] = _files[i].copyWith(clearS3Key: true, clearUploadProgress: true, clearUploadError: true);
+      await DatabaseService.updateFile(_files[i]);
+      RemoteDbService.upsertFile(_files[i]);
+    }
+    notifyListeners();
+    // Trigger upload for all files
+    retryAllFailed();
   }
 }
 

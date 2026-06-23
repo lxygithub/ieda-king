@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -97,18 +98,33 @@ class S3Service {
         dateTime: AWSDateTime.now(),
       );
 
+  /// Generate date-based S3 key with original filename
+  static String generateKey(DateTime date, String originalName) {
+    final d = date.toLocal();
+    String pad(int n) => n.toString().padLeft(2, '0');
+    final ts = '${pad(d.hour)}_${pad(d.minute)}_${pad(d.second)}';
+    return 'files/${d.year}/${pad(d.month)}/${pad(d.day)}/$ts$originalName';
+  }
+
   /// Upload a file to S3. Returns the s3Key on success.
-  Future<String?> uploadFile(String localPath, {String? s3Key}) async {
+  /// [onProgress] callback receives 0.0-1.0 during upload.
+  Future<String?> uploadFile(
+    String localPath, {
+    String? s3Key,
+    void Function(double)? onProgress,
+  }) async {
     if (_config == null || _signer == null) return null;
     final file = File(localPath);
     if (!await file.exists()) return null;
 
-    final key = s3Key ??
-        '${DateTime.now().millisecondsSinceEpoch}_${file.uri.pathSegments.last}';
+    final key = s3Key ?? generateKey(DateTime.now(), '_${file.uri.pathSegments.last}');
     final uri = _uri(key);
     final bytes = await file.readAsBytes();
+    debugPrint('[S3] key=$key uri=$uri');
+    onProgress?.call(0.1);
 
     try {
+      debugPrint('[S3] start uploadFile method');
       final request = AWSHttpRequest(
         method: AWSHttpMethod.put,
         uri: uri,
@@ -120,15 +136,33 @@ class S3Service {
         credentialScope: _scope(),
         serviceConfiguration: S3ServiceConfiguration(),
       );
-      final response = await http.put(
-        signed.uri,
-        headers: signed.headers.map((k, v) => MapEntry(k, v)),
-        body: await signed.bodyBytes as List<int>,
-      );
-      if (response.statusCode == 200) return key;
-      debugPrint('S3 upload failed: ${response.statusCode} ${response.body}');
-    } catch (e) {
-      debugPrint('S3 upload error: $e');
+      debugPrint('[S3] signing complete, starting upload...');
+      onProgress?.call(0.2);
+
+      // Send using regular http.put with signed body
+      final client = http.Client();
+      try {
+        final response = await client
+            .put(
+              signed.uri,
+              headers: signed.headers.map((k, v) => MapEntry(k, v)),
+              body: await signed.bodyBytes as List<int>,
+            )
+            .timeout(const Duration(seconds: 60));
+        debugPrint('[S3] upload response: ${response.statusCode}');
+        onProgress?.call(1.0);
+
+        if (response.statusCode == 200) {
+          return key;
+        }
+        debugPrint('S3 upload failed: ${response.statusCode} ${response.body}');
+      } finally {
+        client.close();
+      }
+    } on TimeoutException catch (e) {
+      debugPrint('[S3] timeout: $e');
+    } catch (e, s) {
+      debugPrint('[S3] upload error: $e\n$s');
     }
     return null;
   }
@@ -150,7 +184,7 @@ class S3Service {
       final response = await http.get(
         signed.uri,
         headers: signed.headers.map((k, v) => MapEntry(k, v)),
-      );
+      ).timeout(const Duration(seconds: 30));
       if (response.statusCode == 200) {
         final file = File(localPath);
         await file.parent.create(recursive: true);
@@ -163,24 +197,26 @@ class S3Service {
     return null;
   }
 
-  /// Check if a file exists on S3
+  /// Check if a file exists on S3 using GET Range (more reliable than HEAD)
   Future<bool> fileExists(String s3Key) async {
     if (_config == null || _signer == null) return false;
     try {
       final request = AWSHttpRequest(
-        method: AWSHttpMethod.head,
+        method: AWSHttpMethod.get,
         uri: _uri(s3Key),
+        headers: const {'Range': 'bytes=0-0'},
       );
       final signed = await _signer!.sign(
         request,
         credentialScope: _scope(),
         serviceConfiguration: S3ServiceConfiguration(),
       );
-      final response = await http.head(
+      final response = await http.get(
         signed.uri,
         headers: signed.headers.map((k, v) => MapEntry(k, v)),
-      );
-      return response.statusCode == 200;
+      ).timeout(const Duration(seconds: 10));
+      // 206 Partial Content = exists, 404 = doesn't exist
+      return response.statusCode == 206 || response.statusCode == 200;
     } catch (_) {
       return false;
     }

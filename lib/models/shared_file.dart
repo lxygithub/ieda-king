@@ -102,6 +102,7 @@ class SharedFile {
     String? uploadError,
     bool clearDescription = false,
     bool clearS3Key = false,
+    bool clearUploadProgress = false,
     bool clearUploadError = false,
   }) =>
       SharedFile(
@@ -115,7 +116,7 @@ class SharedFile {
         mimeType: mimeType,
         fileSize: fileSize,
         s3Key: clearS3Key ? null : (s3Key ?? this.s3Key),
-        uploadProgress: uploadProgress ?? this.uploadProgress,
+        uploadProgress: clearUploadProgress ? null : (uploadProgress ?? this.uploadProgress),
         uploadError: clearUploadError ? null : (uploadError ?? this.uploadError),
         tags: tags ?? this.tags,
         description: clearDescription ? null : (description ?? this.description),

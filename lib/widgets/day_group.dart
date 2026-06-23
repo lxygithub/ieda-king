@@ -50,8 +50,6 @@ class _DayGroupState extends State<DayGroup> {
 
     if (diff == 0) return AppLocalizations.of(context).today;
     if (diff == 1) return AppLocalizations.of(context).yesterday;
-    if (diff == 2) return AppLocalizations.of(context).dayBefore;
-    if (diff < 7) return AppLocalizations.of(context).daysAgo(diff);
     return AppLocalizations.of(context).formatDate(date);
   }
 
