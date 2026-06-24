@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../providers/auth_provider.dart';
 import '../services/api_service.dart';
@@ -14,7 +15,28 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   final _usernameCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
+  bool _obscurePassword = true;
   String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadLastUsername();
+  }
+
+  Future<void> _loadLastUsername() async {
+    final prefs = await SharedPreferences.getInstance();
+    final saved = prefs.getString('last_username');
+    if (saved != null && saved.isNotEmpty) {
+      _usernameCtrl.text = saved;
+      _passwordCtrl.requestFocus();
+    }
+  }
+
+  Future<void> _saveLastUsername(String name) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('last_username', name);
+  }
 
   @override
   void dispose() {
@@ -33,6 +55,7 @@ class _LoginScreenState extends State<LoginScreen> {
     setState(() => _error = null);
     try {
       await context.read<AuthProvider>().login(name, pass);
+      await _saveLastUsername(name);
     } on ApiException catch (e) {
       final msg = e.message.contains('Invalid')
           ? '用户名或密码错误'
@@ -77,12 +100,19 @@ class _LoginScreenState extends State<LoginScreen> {
               const SizedBox(height: 16),
               TextField(
                 controller: _passwordCtrl,
-                decoration: const InputDecoration(
+                obscureText: _obscurePassword,
+                decoration: InputDecoration(
                   labelText: '密码',
-                  prefixIcon: Icon(Icons.lock_outline),
-                  border: OutlineInputBorder(),
+                  prefixIcon: const Icon(Icons.lock_outline),
+                  border: const OutlineInputBorder(),
+                  suffixIcon: IconButton(
+                    icon: Icon(_obscurePassword
+                        ? Icons.visibility_off
+                        : Icons.visibility),
+                    onPressed: () =>
+                        setState(() => _obscurePassword = !_obscurePassword),
+                  ),
                 ),
-                obscureText: true,
                 textInputAction: TextInputAction.done,
                 onSubmitted: (_) => _login(),
               ),
