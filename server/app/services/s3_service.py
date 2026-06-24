@@ -31,15 +31,16 @@ def sanitize_filename(name: str) -> str:
     return safe[:60] if len(safe) > 60 else safe
 
 
-def generate_s3_key(original_name: str, dt: datetime | None = None) -> str:
-    """Generate S3 key: files/<year>/<month>/<day>/<hour>_<minute>_<second>_<name>"""
+def generate_s3_key(original_name: str, user_id: int | None = None, dt: datetime | None = None) -> str:
+    """Generate S3 key: files/[user_id/]<year>/<month>/<day>/<hour>_<minute>_<second>_<name>"""
     if dt is None:
         dt = datetime.now()
     safe = sanitize_filename(original_name)
-    return (
-        f"files/{dt.year}/{dt.month:02d}/{dt.day:02d}/"
-        f"{dt.hour:02d}_{dt.minute:02d}_{dt.second:02d}_{safe}"
-    )
+    prefix = f"{dt.year}/{dt.month:02d}/{dt.day:02d}"
+    suffix = f"{dt.hour:02d}_{dt.minute:02d}_{dt.second:02d}_{safe}"
+    if user_id is not None:
+        return f"files/{user_id}/{prefix}/{suffix}"
+    return f"files/{prefix}/{suffix}"
 
 
 def upload_file(local_path: str, s3_key: str) -> str | None:

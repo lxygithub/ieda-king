@@ -66,8 +66,8 @@ async def upload_file(
         f.write(content)
     file_size = len(content)
 
-    # Upload to S3
-    s3_key = s3_service.generate_s3_key(name)
+    # Upload to S3 (with user isolation in key path)
+    s3_key = s3_service.generate_s3_key(name, user_id=user.id)
     uploaded = s3_service.upload_file(tmp_path, s3_key)
 
     # Clean up temp
