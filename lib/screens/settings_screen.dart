@@ -130,7 +130,11 @@ class SettingsScreen extends StatelessWidget {
                     } on ApiException catch (e) {
                       setDialogState(() => error = e.message);
                     } catch (e) {
-                      setDialogState(() => error = '请求失败: $e');
+                      final s = e.toString();
+                      final msg = s.contains('TimeoutException') || s.contains('SocketException') || s.contains('Connection refused')
+                          ? '网络连接失败，请检查网络后重试'
+                          : '请求失败: $e';
+                      setDialogState(() => error = msg);
                     }
                   }, child: const Text('确认')),
                 ],
@@ -175,7 +179,11 @@ class SettingsScreen extends StatelessWidget {
                     } on ApiException catch (e) {
                       setDialogState(() => error = e.message);
                     } catch (e) {
-                      setDialogState(() => error = '请求失败: $e');
+                      final s = e.toString();
+                      final msg = s.contains('TimeoutException') || s.contains('SocketException') || s.contains('Connection refused')
+                          ? '网络连接失败，请检查网络后重试'
+                          : '请求失败: $e';
+                      setDialogState(() => error = msg);
                     }
                   }, child: const Text('确认')),
                 ],
