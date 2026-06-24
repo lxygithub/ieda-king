@@ -1,3 +1,4 @@
+import json
 import os
 import uuid
 
@@ -35,7 +36,10 @@ async def sync_file(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    data = req.model_dump(exclude_none=True, exclude={"id"})
+    data = req.model_dump(exclude_none=True)
+    # Generate UUID if Flutter didn't provide one
+    if "id" not in data or not data["id"]:
+        data["id"] = uuid.uuid4().hex
     record = await file_service.create_file(db, user.id, data)
     return SyncResponse(success=True, id=record.id)
 
@@ -155,7 +159,7 @@ def _file_to_dict(r) -> dict:
         "uploadError": r.uploadError,
         "uploadId": r.uploadId,
         "uploadedParts": r.uploadedParts,
-        "tags": r.tags,
+        "tags": json.loads(r.tags) if r.tags else [],
         "description": r.description,
     }
     if r.receivedAt:

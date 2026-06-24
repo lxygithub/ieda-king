@@ -1,4 +1,17 @@
 from pydantic import BaseModel, Field
+from typing import Any
+
+
+def _tags_to_str(v: Any) -> str | None:
+    """Coerce tags from list to JSON string."""
+    if v is None:
+        return None
+    if isinstance(v, list):
+        import json
+        return json.dumps(v, ensure_ascii=False)
+    if isinstance(v, str):
+        return v
+    return str(v)
 
 
 class FileResponse(BaseModel):
@@ -39,8 +52,13 @@ class SyncRequest(BaseModel):
     uploadError: str | None = None
     uploadId: str | None = None
     uploadedParts: str | None = None
-    tags: str | None = None
     description: str | None = None
+
+    # Accept tags as string (JSON) or list, normalize to string
+    tags: Any = None
+
+    def model_post_init(self, __context):
+        self.tags = _tags_to_str(self.tags)
 
 
 class DeleteRequest(BaseModel):
