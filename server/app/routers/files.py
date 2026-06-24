@@ -159,5 +159,8 @@ def _file_to_dict(r) -> dict:
         "description": r.description,
     }
     if r.receivedAt:
-        d["receivedAt"] = r.receivedAt.isoformat()
+        if isinstance(r.receivedAt, str):
+            d["receivedAt"] = r.receivedAt
+        else:
+            d["receivedAt"] = r.receivedAt.isoformat()
     return d
