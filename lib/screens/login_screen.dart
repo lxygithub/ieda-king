@@ -15,6 +15,7 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   final _usernameCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
+  final _passwordFocus = FocusNode();
   bool _obscurePassword = true;
   String? _error;
 
@@ -27,10 +28,18 @@ class _LoginScreenState extends State<LoginScreen> {
   Future<void> _loadLastUsername() async {
     final prefs = await SharedPreferences.getInstance();
     final saved = prefs.getString('last_username');
-    if (saved != null && saved.isNotEmpty) {
+    if (saved != null && saved.isNotEmpty && mounted) {
       _usernameCtrl.text = saved;
-      _passwordCtrl.requestFocus();
+      _passwordFocus.requestFocus();
     }
+  }
+
+  @override
+  void dispose() {
+    _usernameCtrl.dispose();
+    _passwordCtrl.dispose();
+    _passwordFocus.dispose();
+    super.dispose();
   }
 
   Future<void> _saveLastUsername(String name) async {
@@ -100,6 +109,7 @@ class _LoginScreenState extends State<LoginScreen> {
               const SizedBox(height: 16),
               TextField(
                 controller: _passwordCtrl,
+                focusNode: _passwordFocus,
                 obscureText: _obscurePassword,
                 decoration: InputDecoration(
                   labelText: '密码',
