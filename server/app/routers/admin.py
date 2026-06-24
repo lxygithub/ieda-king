@@ -143,12 +143,7 @@ async def user_detail(
     if not view_user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    files_result = await db.execute(
-        select(FileRecord)
-        .where(FileRecord.user_id == user_id)
-        .order_by(FileRecord.receivedAt.desc())
-    )
-    files = files_result.scalars().all()
+    files = await file_service.get_user_files(db, user_id)
 
     return HTMLResponse(
         _render(
@@ -167,12 +162,7 @@ async def files_list(
     db: AsyncSession = Depends(get_db),
     _=Depends(_require_admin),
 ):
-    result = await db.execute(
-        select(FileRecord)
-        .order_by(FileRecord.receivedAt.desc())
-        .limit(200)
-    )
-    files = result.scalars().all()
+    files = await file_service.get_all_files(db)
     return HTMLResponse(
         _render(
             "files.html",

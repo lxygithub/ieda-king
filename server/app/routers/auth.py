@@ -43,6 +43,10 @@ async def register(
     await db.flush()
     await db.refresh(user)
 
+    # Create per-user files table
+    from app.services.file_service import ensure_table
+    await ensure_table(db, user.id)
+
     return RegisterResponse(
         message="User registered successfully",
         user=UserResponse(

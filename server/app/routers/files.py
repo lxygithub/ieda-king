@@ -16,9 +16,6 @@ from app.schemas.file import (
     SyncRequest,
     SyncResponse,
 )
-from sqlalchemy import select
-
-from app.models.file_record import FileRecord
 from app.services import file_service, s3_service
 
 router = APIRouter(prefix="/api/files", tags=["files"])
@@ -30,7 +27,7 @@ async def list_files(
     db: AsyncSession = Depends(get_db),
 ):
     records = await file_service.get_user_files(db, user.id)
-    return {"files": [_file_to_dict(r) for r in records]}
+    return {"files": records}
 
 
 @router.post("/sync", response_model=SyncResponse)
@@ -40,11 +37,10 @@ async def sync_file(
     db: AsyncSession = Depends(get_db),
 ):
     data = req.model_dump(exclude_none=True)
-    # Generate UUID if Flutter didn't provide one
     if "id" not in data or not data["id"]:
         data["id"] = uuid.uuid4().hex
     record = await file_service.create_file(db, user.id, data)
-    return SyncResponse(success=True, id=record.id)
+    return SyncResponse(success=True, id=record["id"])
 
 
 @router.post("/upload")
@@ -57,8 +53,6 @@ async def upload_file(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Receive file from phone, upload to S3, update existing DB record with s3Key."""
-    # Save uploaded file to temp
     suffix = os.path.splitext(name)[1] or ".tmp"
     tmp_path = f"/tmp/idea_king_{uuid.uuid4().hex}{suffix}"
     content = await file.read()
@@ -66,11 +60,9 @@ async def upload_file(
         f.write(content)
     file_size = len(content)
 
-    # Upload to S3 (with user isolation in key path)
     s3_key = s3_service.generate_s3_key(name, user_id=user.id)
     uploaded = s3_service.upload_file(tmp_path, s3_key)
 
-    # Clean up temp
     try:
         os.remove(tmp_path)
     except OSError:
@@ -82,15 +74,7 @@ async def upload_file(
             detail="S3 upload failed",
         )
 
-    # Update existing DB record with s3Key
-    from sqlalchemy import update as sa_update
-    from app.models.file_record import FileRecord
-    stmt = (
-        sa_update(FileRecord)
-        .where(FileRecord.id == file_id, FileRecord.user_id == user.id)
-        .values(s3Key=s3_key, fileSize=file_size, mimeType=mime_type or file.content_type)
-    )
-    await db.execute(stmt)
+    await file_service.update_file_s3(db, user.id, file_id, s3_key, file_size, mime_type)
 
     return {
         "success": True,
@@ -108,26 +92,46 @@ async def download_file(
     user: User | None = Depends(get_current_user_optional),
     db: AsyncSession = Depends(get_db),
 ):
-    """Download a file from S3 through the API.
+    """Download a file from S3 through the API."""
+    # Find record from shared table or per-user table
+    # For simplicity, query shared table first (has user_id)
+    record = None
+    s3_key = None
+    file_name = None
+    mime_type = None
 
-    Supports:
-    - JWT auth (Authorization: Bearer header)
-    - Admin session cookie (for admin panel)
-    - Admin download via ?token=admin query param (for <img> tags)
-    """
-    # Find the record
-    result = await db.execute(
-        select(FileRecord).where(FileRecord.id == file_id)
-    )
-    record = result.scalar_one_or_none()
-    if not record or not record.s3Key:
+    # Try per-user tables via admin or owner
+    if user:
+        user_records = await file_service.get_user_files(db, user.id)
+        for r in user_records:
+            if r["id"] == file_id:
+                record = r
+                break
+    if not record and request.session.get("admin_user_id"):
+        admin_id = request.session["admin_user_id"]
+        admin_records = await file_service.get_user_files(db, admin_id)
+        for r in admin_records:
+            if r["id"] == file_id:
+                record = r
+                break
+
+    # Fallback: shared table
+    if not record:
+        from sqlalchemy import text
+        result = await db.execute(
+            text("SELECT * FROM files WHERE id = :id"),
+            {"id": file_id},
+        )
+        row = result.mappings().one_or_none()
+        if row:
+            record = dict(row)
+
+    if not record or not record.get("s3Key"):
         raise HTTPException(status_code=404, detail="File not found")
 
-    # Auth check: owner, admin, or admin session
+    # Auth check
     is_authorized = False
-    if user and user.id == record.user_id:
-        is_authorized = True
-    elif user and user.is_admin:
+    if user and any(r["id"] == file_id for r in (await file_service.get_user_files(db, user.id))):
         is_authorized = True
     elif request.session.get("admin_user_id"):
         is_authorized = True
@@ -135,12 +139,12 @@ async def download_file(
     if not is_authorized:
         raise HTTPException(status_code=403, detail="Access denied")
 
-    tmp_path = s3_service.download_file(record.s3Key)
+    tmp_path = s3_service.download_file(record["s3Key"])
     if not tmp_path:
         raise HTTPException(status_code=502, detail="S3 download failed")
 
-    media_type = record.mimeType or "application/octet-stream"
-    return FileResponse(tmp_path, media_type=media_type, filename=record.name)
+    media_type = record.get("mimeType") or "application/octet-stream"
+    return FileResponse(tmp_path, media_type=media_type, filename=record.get("name", "file"))
 
 
 @router.post("/delete", response_model=DeleteResponse)
@@ -164,32 +168,6 @@ async def clear_files(
     db: AsyncSession = Depends(get_db),
 ):
     count = await file_service.clear_user_files(db, user.id)
-    return ClearResponse(success=True, deleted_count=count)
-
-
-def _file_to_dict(r) -> dict:
-    """Match the Flutter SharedFile.toJson() field naming."""
-    d = {
-        "id": r.id,
-        "user_id": r.user_id,
-        "name": r.name,
-        "type": r.type,
-        "localPath": r.localPath,
-        "textContent": r.textContent,
-        "sourceUri": r.sourceUri,
-        "mimeType": r.mimeType,
-        "fileSize": r.fileSize,
-        "s3Key": r.s3Key,
-        "uploadProgress": r.uploadProgress,
-        "uploadError": r.uploadError,
-        "uploadId": r.uploadId,
-        "uploadedParts": r.uploadedParts,
-        "tags": json.loads(r.tags) if r.tags else [],
-        "description": r.description,
-    }
-    if r.receivedAt:
-        if isinstance(r.receivedAt, str):
-            d["receivedAt"] = r.receivedAt
-        else:
-            d["receivedAt"] = r.receivedAt.isoformat()
-    return d
+    return ClearResponse(
+        success=True, deleted_count=count
+    )
