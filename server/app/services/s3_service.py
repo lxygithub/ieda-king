@@ -1,3 +1,4 @@
+import hashlib
 import os
 import re
 import tempfile
@@ -31,15 +32,20 @@ def sanitize_filename(name: str) -> str:
     return safe[:60] if len(safe) > 60 else safe
 
 
+def _storage_id(user_id: int) -> int:
+    """Opaque numeric ID for S3 paths. 10000000 = admin, +1 per user."""
+    return user_id + 9999999
+
+
 def generate_s3_key(original_name: str, user_id: int | None = None, dt: datetime | None = None) -> str:
-    """Generate S3 key: files/[user_id/]<year>/<month>/<day>/<hour>_<minute>_<second>_<name>"""
+    """Generate S3 key: files/[storage_id/]<year>/<month>/<day>/<hour>_<minute>_<second>_<name>"""
     if dt is None:
         dt = datetime.now()
     safe = sanitize_filename(original_name)
     prefix = f"{dt.year}/{dt.month:02d}/{dt.day:02d}"
     suffix = f"{dt.hour:02d}_{dt.minute:02d}_{dt.second:02d}_{safe}"
     if user_id is not None:
-        return f"files/{user_id}/{prefix}/{suffix}"
+        return f"files/{_storage_id(user_id)}/{prefix}/{suffix}"
     return f"files/{prefix}/{suffix}"
 
 
