@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}用户: {{ view_user.username }}{% endblock %}
+{% block content %}
+<h1>用户: {{ view_user.username }}</h1>
+<p>ID: {{ view_user.id }} | 管理员: {% if view_user.is_admin %}是{% else %}否{% endif %} | 注册: {{ view_user.created_at }}</p>
+<hr>
+<h2>文件列表 ({{ files|length }})</h2>
+<table class="table">
+    <thead>
+        <tr>
+            <th>ID</th>
+            <th>文件名</th>
+            <th>类型</th>
+            <th>大小</th>
+            <th>S3</th>
+            <th>接收时间</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for f in files %}
+        <tr>
+            <td>{{ f.id }}</td>
+            <td>{{ f.name }}</td>
+            <td>{{ f.type }}</td>
+            <td>{% if f.fileSize %}{{ (f.fileSize / 1024)|round(1) }} KB{% else %}-{% endif %}</td>
+            <td>{% if f.s3Key %}✅{% else %}❌{% endif %}</td>
+            <td>{{ f.receivedAt }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" class="empty">暂无文件</td></tr>
+        {% endfor %}
+    </tbody>
+</table>
+<a href="/admin/users" class="btn">← 返回用户列表</a>
+{% endblock %}

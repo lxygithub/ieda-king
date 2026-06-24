@@ -11,7 +11,14 @@ class DatabaseService {
   static Future<Database> get database async {
     if (_db != null) return _db!;
     _db = await _initDb();
+    await _migrate(_db!);
     return _db!;
+  }
+
+  static Future<void> _migrate(Database db) async {
+    // Add uploadId column if missing
+    try { await db.execute('ALTER TABLE files ADD COLUMN uploadId TEXT'); } catch (_) {}
+    try { await db.execute('ALTER TABLE files ADD COLUMN uploadedParts TEXT'); } catch (_) {}
   }
 
   static Future<Database> _initDb() async {
@@ -35,6 +42,8 @@ class DatabaseService {
             s3Key TEXT,
             uploadProgress REAL,
             uploadError TEXT,
+            uploadId TEXT,
+            uploadedParts TEXT,
             description TEXT,
             tags TEXT NOT NULL DEFAULT '[]'
           )
@@ -56,6 +65,8 @@ class DatabaseService {
         s3Key: row['s3Key'] as String?,
         uploadProgress: (row['uploadProgress'] as num?)?.toDouble(),
         uploadError: row['uploadError'] as String?,
+        uploadId: row['uploadId'] as String?,
+        uploadedParts: row['uploadedParts'] as String?,
         tags: (jsonDecode(row['tags'] as String) as List).cast<String>(),
         description: row['description'] as String?,
       );
@@ -73,6 +84,8 @@ class DatabaseService {
         's3Key': f.s3Key,
         'uploadProgress': f.uploadProgress,
         'uploadError': f.uploadError,
+        'uploadId': f.uploadId,
+        'uploadedParts': f.uploadedParts,
         'tags': jsonEncode(f.tags),
         'description': f.description,
       };

@@ -6,7 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/shared_file.dart';
 import '../services/database_service.dart';
-import '../services/remote_db_service.dart';
+import '../services/api_service.dart';
 import '../services/s3_service.dart';
 import '../utils/file_handler.dart';
 
@@ -261,35 +261,106 @@ class TimelineProvider extends ChangeNotifier {
     final dateDir = '${d.year}/${pad(d.month)}/${pad(d.day)}';
     final s3Key = 'files/$dateDir/${pad(d.hour)}_${pad(d.minute)}_${pad(d.second)}_$truncated';
 
-    // Mark as uploading
-    _files[idx] = _files[idx].copyWith(uploadProgress: 0.01, clearUploadError: true);
-    notifyListeners();
-
-
-    try {
-      double lastNotified = 0;
-      final uploadedKey = await s3.uploadFile(
-        uploadPath,
-        s3Key: s3Key,
-        onProgress: (p) {
-          _files[idx] = _files[idx].copyWith(uploadProgress: p);
-          if (p >= 1.0 || p - lastNotified >= 0.02 || lastNotified == 0) {
-            lastNotified = p;
-            notifyListeners();
-          }
-        },
-      );
-      if (uploadedKey != null) {
-        _files[idx] = _files[idx].copyWith(s3Key: uploadedKey, clearUploadProgress: true, clearUploadError: true);
-      } else {
-        _files[idx] = _files[idx].copyWith(clearUploadProgress: true, uploadError: '上传失败');
-      }
-      notifyListeners(); // hide progress bar immediately
-    } catch (e) {
-      _files[idx] = _files[idx].copyWith(clearUploadProgress: true, uploadError: '上传异常: $e');
+    final fileSize = File(uploadPath).lengthSync();
+    if (fileSize < 5 * 1024 * 1024) {
+      // Small file: simple upload
+      _files[idx] = _files[idx].copyWith(uploadProgress: 0.01, clearUploadError: true);
       notifyListeners();
+      try {
+        double lastNotified = 0;
+        final uploadedKey = await s3.uploadFile(uploadPath, s3Key: s3Key, onProgress: (p) {
+          _files[idx] = _files[idx].copyWith(uploadProgress: p);
+          if (p >= 1.0 || p - lastNotified >= 0.02 || lastNotified == 0) { lastNotified = p; notifyListeners(); }
+        });
+        if (uploadedKey != null) {
+          _files[idx] = _files[idx].copyWith(s3Key: uploadedKey, clearUploadProgress: true, clearUploadError: true, clearUploadId: true, uploadedParts: null);
+        } else {
+          _files[idx] = _files[idx].copyWith(clearUploadProgress: true, uploadError: '上传失败');
+        }
+        notifyListeners();
+      } catch (e) {
+        _files[idx] = _files[idx].copyWith(clearUploadProgress: true, uploadError: '上传异常: $e');
+        notifyListeners();
+      }
+    } else {
+      // Large file: multipart upload with resume
+      await _multipartUpload(s3, idx, s3Key, uploadPath);
     }
     await _persist();
+  }
+
+  /// Multipart upload with resume for large files (>=5MB)
+  Future<void> _multipartUpload(S3Service s3, int idx, String s3Key, String uploadPath) async {
+    final fileBytes = await File(uploadPath).readAsBytes();
+    const partSize = 5 * 1024 * 1024;
+    final totalParts = (fileBytes.length / partSize).ceil();
+    final file = _files[idx];
+
+    // Resume: use saved uploadedParts from DB (more reliable than listParts)
+    String? uploadId = file.uploadId;
+    List<MapEntry<int, String>> existingParts = [];
+    if (uploadId != null && file.uploadedParts != null) {
+      try {
+        final list = jsonDecode(file.uploadedParts!) as List;
+        existingParts = list.map((e) => MapEntry(e['part'] as int, e['etag'] as String)).toList();
+        debugPrint('[S3] resume $uploadId: ${existingParts.length}/$totalParts parts from DB');
+      } catch (_) {
+        // Fallback to S3 listParts if DB parse fails
+        existingParts = await s3.listParts(s3Key, uploadId);
+        debugPrint('[S3] resume $uploadId: ${existingParts.length}/$totalParts parts from S3');
+      }
+    }
+
+    // Init if needed
+    if (uploadId == null) {
+      uploadId = await s3.initMultipart(s3Key);
+      if (uploadId == null) { _files[idx] = _files[idx].copyWith(clearUploadProgress: true, uploadError: '初始化失败'); notifyListeners(); return; }
+    }
+    _files[idx] = _files[idx].copyWith(uploadId: uploadId, uploadProgress: 0.01, clearUploadError: true);
+    await DatabaseService.updateFile(_files[idx]);
+    debugPrint('[S3] saved uploadId=$uploadId to DB for ${_files[idx].id}');
+    notifyListeners();
+
+    // Upload missing parts
+    final existingSet = existingParts.map((e) => e.key).toSet();
+    final allParts = <MapEntry<int, String>>[...existingParts];
+    int sentBytes = existingParts.length * partSize;
+
+    for (int p = 1; p <= totalParts; p++) {
+      if (existingSet.contains(p)) continue;
+      final start = (p - 1) * partSize;
+      final end = start + partSize > fileBytes.length ? fileBytes.length : start + partSize;
+      final etag = await s3.uploadPart(s3Key, uploadId, p, fileBytes.sublist(start, end));
+      if (etag == null) {
+        _files[idx] = _files[idx].copyWith(uploadProgress: (sentBytes / fileBytes.length).clamp(0.01, 0.99), uploadError: '上传中断');
+        await DatabaseService.updateFile(_files[idx]);
+        notifyListeners(); return;
+      }
+      allParts.add(MapEntry(p, etag));
+      sentBytes += end - start;
+      _files[idx] = _files[idx].copyWith(
+        uploadProgress: (sentBytes / fileBytes.length).clamp(0.01, 0.99),
+        uploadedParts: jsonEncode(allParts.map((e) => {'part': e.key, 'etag': e.value}).toList()),
+      );
+      await DatabaseService.updateFile(_files[idx]); // Persist for resume
+      notifyListeners();
+    }
+
+    // Complete
+    if (await s3.completeMultipart(s3Key, uploadId, allParts)) {
+      _files[idx] = _files[idx].copyWith(s3Key: s3Key, clearUploadProgress: true, clearUploadError: true, clearUploadId: true, uploadedParts: null);
+      debugPrint('[S3] multipart done');
+      await DatabaseService.updateFile(_files[idx]);
+      notifyListeners();
+      return;
+    }
+    // Failed — discard broken uploadId, retry via simple upload
+    debugPrint('[S3] complete failed, clearing state for retry');
+    _files[idx] = _files[idx].copyWith(clearUploadProgress: true, clearUploadId: true, uploadedParts: null, uploadError: '合并失败');
+    await DatabaseService.updateFile(_files[idx]);
+    notifyListeners();
+    await DatabaseService.updateFile(_files[idx]);
+    notifyListeners();
   }
 
   /// Upload all files with concurrency limit of 3
@@ -330,15 +401,6 @@ class TimelineProvider extends ChangeNotifier {
     }
   }
 
-  /// Retry files stuck with uploadProgress but no s3Key
-  void _retryStuckFiles() {
-    for (final f in _files) {
-      if (f.s3Key == null && f.uploadProgress != null && f.localPath != null) {
-        _uploadToS3(f);
-      }
-    }
-  }
-
   /// Retry uploading a failed file
   Future<void> retryUpload(String fileId) async {
     final idx = _files.indexWhere((f) => f.id == fileId);
@@ -366,8 +428,8 @@ class TimelineProvider extends ChangeNotifier {
       } else {
         await DatabaseService.insertFile(f);
       }
-      // Sync to MySQL (fire-and-forget)
-      RemoteDbService.upsertFile(f);
+      // Sync to backend (fire-and-forget)
+      ApiService.instance.syncFile(f.toJson());
     }
   }
 
@@ -393,12 +455,11 @@ class TimelineProvider extends ChangeNotifier {
       }
       _files = await DatabaseService.loadFiles();
       debugPrint('[S3] loadFromDisk: ${_files.length} files loaded');
-      // Sync all local files to MySQL (remote backup)
+      // Sync all local files to backend (fire-and-forget)
       for (final f in _files) {
-        RemoteDbService.upsertFile(f);
+        ApiService.instance.syncFile(f.toJson());
       }
       _uploadPendingFiles();
-      _retryStuckFiles();
       _restoreFromS3();
     } finally {
       _initialized = true;
@@ -412,14 +473,14 @@ class TimelineProvider extends ChangeNotifier {
   Future<void> deleteFile(SharedFile file) async {
     _files.removeWhere((f) => f.id == file.id);
     await DatabaseService.deleteFile(file.id);
-    RemoteDbService.deleteFile(file.id);
+    ApiService.instance.deleteFile(file.id);
     notifyListeners();
   }
 
   Future<void> clearAll() async {
     _files.clear();
     await DatabaseService.clearAll();
-    RemoteDbService.clearAll();
+    ApiService.instance.clearAll();
     notifyListeners();
   }
 
@@ -428,7 +489,7 @@ class TimelineProvider extends ChangeNotifier {
     for (int i = 0; i < _files.length; i++) {
       _files[i] = _files[i].copyWith(clearS3Key: true, clearUploadProgress: true, clearUploadError: true);
       await DatabaseService.updateFile(_files[i]);
-      RemoteDbService.upsertFile(_files[i]);
+      ApiService.instance.syncFile(_files[i].toJson());
     }
     notifyListeners();
     // Trigger upload for all files

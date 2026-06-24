@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}用户管理{% endblock %}
+{% block content %}
+<h1>用户列表</h1>
+<table class="table">
+    <thead>
+        <tr>
+            <th>ID</th>
+            <th>用户名</th>
+            <th>管理员</th>
+            <th>注册时间</th>
+            <th>操作</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for u in users %}
+        <tr>
+            <td>{{ u.id }}</td>
+            <td>{{ u.username }}</td>
+            <td>{% if u.is_admin %}✅{% else %}{% endif %}</td>
+            <td>{{ u.created_at }}</td>
+            <td><a href="/admin/users/{{ u.id }}" class="btn btn-sm">查看文件</a></td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endblock %}

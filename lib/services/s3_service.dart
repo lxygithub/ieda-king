@@ -1,8 +1,14 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:aws_common/aws_common.dart';
+import 'package:aws_signature_v4/aws_signature_v4.dart';
 import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 import 'package:minio/minio.dart';
+// ignore: implementation_imports
+import 'package:minio/src/minio_models_generated.dart' show CompletedPart;
 import 'package:shared_preferences/shared_preferences.dart';
 
 class S3Config {
@@ -66,7 +72,6 @@ class S3Service {
 
   void _initMinio() {
     if (_config == null) return;
-    // Minio expects just host:port, no protocol prefix
     var ep = _config!.endpoint;
     if (ep.startsWith('http://')) ep = ep.substring(7);
     if (ep.startsWith('https://')) ep = ep.substring(8);
@@ -88,7 +93,7 @@ class S3Service {
     return 'files/${d.year}/${pad(d.month)}/${pad(d.day)}/$ts$originalName';
   }
 
-  /// Upload file using Minio. Returns s3Key on success.
+  /// Upload file via Minio. Returns s3Key on success.
   Future<String?> uploadFile(String localPath, {String? s3Key, void Function(double)? onProgress}) async {
     if (_minio == null) return null;
     final file = File(localPath);
@@ -96,36 +101,29 @@ class S3Service {
 
     final key = s3Key ?? generateKey(DateTime.now(), '_${file.uri.pathSegments.last}');
     final bytes = await file.readAsBytes();
-    debugPrint('[S3] minio uploading ${key} (${bytes.length} bytes)');
-    onProgress?.call(0.1);
 
-    // Split into 1MB chunks for stream to work better with Minio internals
     const chunkSize = 1024 * 1024;
     final chunks = <Uint8List>[];
     for (int i = 0; i < bytes.length; i += chunkSize) {
       final end = (i + chunkSize) < bytes.length ? i + chunkSize : bytes.length;
       chunks.add(bytes.sublist(i, end));
     }
-    debugPrint('[S3] minio upload ${chunks.length} chunks');
 
+    onProgress?.call(0.1);
     try {
       await _minio!.putObject(
-        _config!.bucket,
-        key,
-        Stream.fromIterable(chunks),
+        _config!.bucket, key, Stream.fromIterable(chunks),
         size: bytes.length,
         onProgress: (sent) {
           if (bytes.isNotEmpty) {
-            final p = 0.1 + 0.85 * (sent / bytes.length);
-            onProgress?.call(p.clamp(0.1, 1.0));
+            onProgress?.call((0.1 + 0.85 * (sent / bytes.length)).clamp(0.1, 1.0));
           }
         },
       );
       onProgress?.call(1.0);
-      debugPrint('[S3] minio upload success');
       return key;
     } catch (e, s) {
-      debugPrint('[S3] minio upload error: $e\n$s');
+      debugPrint('[S3] upload error: $e\n$s');
       return null;
     }
   }
@@ -153,5 +151,77 @@ class S3Service {
     } catch (_) {
       return false;
     }
+  }
+
+  // ===== Multipart upload (resume support) =====
+
+  AWSSigV4Signer _buildSigner() {
+    return AWSSigV4Signer(
+      credentialsProvider: AWSCredentialsProvider(
+        AWSCredentials(_config!.accessKey, _config!.secretKey),
+      ),
+    );
+  }
+
+  AWSCredentialScope _scope() => AWSCredentialScope(
+        region: _config!.region,
+        service: AWSService.s3,
+        dateTime: AWSDateTime.now(),
+      );
+
+  String _host() => '${_config!.endpoint}:${_config!.port}';
+
+  Uri _partUri(String s3Key, String uploadId, int partNumber) {
+    return Uri.parse('http://${_host()}/${_config!.bucket}/$s3Key?partNumber=$partNumber&uploadId=$uploadId');
+  }
+
+  /// Initiate multipart upload
+  Future<String?> initMultipart(String s3Key) async {
+    if (_minio == null) return null;
+    try {
+      final id = await _minio!.initiateNewMultipartUpload(_config!.bucket, s3Key, null);
+      debugPrint('[S3] multipart initiated: $id');
+      return id;
+    } catch (e) { debugPrint('[S3] init multipart error: $e'); return null; }
+  }
+
+  /// Upload a single part via signed HTTP PUT
+  Future<String?> uploadPart(String s3Key, String uploadId, int partNumber, List<int> data) async {
+    if (_config == null) return null;
+    final signer = _buildSigner();
+    final uri = _partUri(s3Key, uploadId, partNumber);
+    try {
+      final req = AWSHttpRequest(method: AWSHttpMethod.put, uri: uri, body: data, headers: const {'Content-Type': 'application/octet-stream'});
+      final signed = await signer.sign(req, credentialScope: _scope(), serviceConfiguration: S3ServiceConfiguration());
+      final resp = await http.put(signed.uri, headers: signed.headers.map((k, v) => MapEntry(k, v)), body: data).timeout(const Duration(seconds: 120));
+      if (resp.statusCode == 200) {
+        final etag = resp.headers['etag'] ?? '';
+        debugPrint('[S3] part $partNumber done');
+        return etag;
+      }
+      debugPrint('[S3] part $partNumber failed: ${resp.statusCode}');
+    } catch (e) { debugPrint('[S3] part $partNumber error: $e'); }
+    return null;
+  }
+
+  /// Complete multipart upload
+  Future<bool> completeMultipart(String s3Key, String uploadId, List<MapEntry<int, String>> parts) async {
+    if (_minio == null) return false;
+    try {
+      final completed = parts.map((p) => CompletedPart(p.value, p.key)).toList();
+      await _minio!.completeMultipartUpload(_config!.bucket, s3Key, uploadId, completed);
+      debugPrint('[S3] multipart completed');
+      return true;
+    } catch (e) { debugPrint('[S3] complete error: $e'); return false; }
+  }
+
+  /// List already-uploaded parts
+  Future<List<MapEntry<int, String>>> listParts(String s3Key, String uploadId) async {
+    if (_minio == null) return [];
+    try {
+      final parts = await _minio!.listParts(_config!.bucket, s3Key, uploadId).toList();
+      return parts.where((p) => p.partNumber != null && p.eTag != null)
+          .map((p) => MapEntry(p.partNumber!, p.eTag!)).toList();
+    } catch (e) { debugPrint('[S3] list parts error: $e'); return []; }
   }
 }

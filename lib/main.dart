@@ -4,44 +4,51 @@ import 'package:provider/provider.dart';
 import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 
 import 'l10n/app_localizations.dart';
+import 'providers/auth_provider.dart';
 import 'providers/timeline_provider.dart';
+import 'screens/login_screen.dart';
+import 'screens/register_screen.dart';
 import 'screens/timeline_screen.dart';
-import 'services/remote_db_service.dart';
+import 'services/api_service.dart';
 import 'services/s3_service.dart';
+
+const _apiBaseUrl = 'http://192.227.212.20:8080';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await _initS3();
-  await _initMySQL();
-  runApp(const ShareTimelineApp());
-}
 
-Future<void> _initMySQL() async {
-  await RemoteDbService.saveConfig(const MySQLConfig(
-      host: '192.227.212.20',
-      port: 15639,
-      user: 'root',
-      password: 'mysql_ktXzzs',
-      database: 'idea_king',
-    ));
-}
-
-Future<void> _initS3() async {
+  // Init S3 config (fire-and-forget; S3Service loads from SharedPrefs)
   try {
     final s3 = S3Service();
-    // Always save fresh config to ensure correct format (endpoint without protocol)
     await s3.saveConfig(const S3Config(
       endpoint: '192.227.212.20',
       port: 13900,
       accessKey: 'GKcda0ccd3a856a1c1e1bd46b7',
-      secretKey: '61a143bedcaa3379ced011172aae03ce1048e2b4ed44c8394a418f03af4db00a',
+      secretKey:
+          '61a143bedcaa3379ced011172aae03ce1048e2b4ed44c8394a418f03af4db00a',
       bucket: 'idea-king',
       region: 'garage',
     ));
-    debugPrint('[S3] config saved');
   } catch (e) {
-    debugPrint('[S3] init error: $e');
+    debugPrint('[init] S3 error: $e');
   }
+
+  // Init API base
+  ApiService.instance.baseUrl = _apiBaseUrl;
+
+  // Init auth (load persisted token)
+  final authProvider = AuthProvider();
+  await authProvider.init();
+
+  runApp(
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider.value(value: authProvider),
+        ChangeNotifierProvider(create: (_) => TimelineProvider()),
+      ],
+      child: const ShareTimelineApp(),
+    ),
+  );
 }
 
 class ShareTimelineApp extends StatelessWidget {
@@ -49,38 +56,61 @@ class ShareTimelineApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ChangeNotifierProvider(
-      create: (_) => TimelineProvider(),
-      child: MaterialApp(
-        title: 'Idea King',
-        debugShowCheckedModeBanner: false,
-        localizationsDelegates: const [
-          AppLocalizations.delegate,
-          GlobalMaterialLocalizations.delegate,
-          GlobalWidgetsLocalizations.delegate,
-        ],
-        supportedLocales: const [
-          Locale('zh'),
-          Locale('en'),
-        ],
-        theme: ThemeData(
-          colorSchemeSeed: Colors.indigo,
-          useMaterial3: true,
-          brightness: Brightness.light,
-        ),
-        darkTheme: ThemeData(
-          colorSchemeSeed: Colors.indigo,
-          useMaterial3: true,
-          brightness: Brightness.dark,
-        ),
-        themeMode: ThemeMode.system,
-        home: const _ShareReceiver(),
+    return MaterialApp(
+      title: 'Idea King',
+      debugShowCheckedModeBanner: false,
+      localizationsDelegates: const [
+        AppLocalizations.delegate,
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+      ],
+      supportedLocales: const [
+        Locale('zh'),
+        Locale('en'),
+      ],
+      theme: ThemeData(
+        colorSchemeSeed: Colors.indigo,
+        useMaterial3: true,
+        brightness: Brightness.light,
       ),
+      darkTheme: ThemeData(
+        colorSchemeSeed: Colors.indigo,
+        useMaterial3: true,
+        brightness: Brightness.dark,
+      ),
+      themeMode: ThemeMode.system,
+      // Auth gate: show splash → login → timeline
+      home: const _AppEntry(),
+      routes: {
+        '/login': (_) => const LoginScreen(),
+        '/register': (_) => const RegisterScreen(),
+      },
     );
   }
 }
 
-/// Listens to share intents and forwards to TimelineProvider
+/// Shows a splash while AuthProvider initializes,
+/// then routes to login or the main timeline.
+class _AppEntry extends StatelessWidget {
+  const _AppEntry();
+
+  @override
+  Widget build(BuildContext context) {
+    return Consumer<AuthProvider>(builder: (context, auth, _) {
+      if (!auth.initialized) {
+        return const Scaffold(
+          body: Center(child: CircularProgressIndicator()),
+        );
+      }
+      if (!auth.isLoggedIn) {
+        return const LoginScreen();
+      }
+      return const _ShareReceiver();
+    });
+  }
+}
+
+/// Listens to share intents and forwards to TimelineProvider.
 class _ShareReceiver extends StatefulWidget {
   const _ShareReceiver();
 
@@ -101,7 +131,6 @@ class _ShareReceiverState extends State<_ShareReceiver> {
         .getInitialMedia()
         .then((List<SharedMediaFile> files) {
       _processSharedFiles(files);
-      // Mark as handled so they don't repeat
       ReceiveSharingIntent.instance.reset();
     });
 
@@ -114,15 +143,19 @@ class _ShareReceiverState extends State<_ShareReceiver> {
   }
 
   Future<void> _processSharedFiles(List<SharedMediaFile> files) async {
-    if (files.isEmpty) return;
-    if (!mounted) return;
+    if (files.isEmpty || !mounted) return;
     final provider = context.read<TimelineProvider>();
 
-    // Separate text and file shares
-    final textShares =
-        files.where((f) => f.type == SharedMediaType.text || f.type == SharedMediaType.url).toList();
-    final fileShares =
-        files.where((f) => f.type == SharedMediaType.file || f.type == SharedMediaType.image || f.type == SharedMediaType.video).toList();
+    final textShares = files
+        .where((f) =>
+            f.type == SharedMediaType.text || f.type == SharedMediaType.url)
+        .toList();
+    final fileShares = files
+        .where((f) =>
+            f.type == SharedMediaType.file ||
+            f.type == SharedMediaType.image ||
+            f.type == SharedMediaType.video)
+        .toList();
 
     for (final t in textShares) {
       final content = t.path;

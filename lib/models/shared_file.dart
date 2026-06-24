@@ -59,6 +59,8 @@ class SharedFile {
   final String? s3Key;
   final double? uploadProgress; // null=done/idle, 0.0-1.0=uploading
   final String? uploadError;
+  final String? uploadId; // Minio multipart upload ID (for resume)
+  final String? uploadedParts; // JSON: [{"part":1,"etag":"..."}]
   final List<String> tags;
   final String? description;
 
@@ -75,6 +77,8 @@ class SharedFile {
     this.s3Key,
     this.uploadProgress,
     this.uploadError,
+    this.uploadId,
+    this.uploadedParts,
     this.tags = const [],
     this.description,
   });
@@ -100,10 +104,13 @@ class SharedFile {
     String? s3Key,
     double? uploadProgress,
     String? uploadError,
+    String? uploadId,
+    String? uploadedParts,
     bool clearDescription = false,
     bool clearS3Key = false,
     bool clearUploadProgress = false,
     bool clearUploadError = false,
+    bool clearUploadId = false,
   }) =>
       SharedFile(
         id: id,
@@ -118,6 +125,8 @@ class SharedFile {
         s3Key: clearS3Key ? null : (s3Key ?? this.s3Key),
         uploadProgress: clearUploadProgress ? null : (uploadProgress ?? this.uploadProgress),
         uploadError: clearUploadError ? null : (uploadError ?? this.uploadError),
+        uploadId: clearUploadId ? null : (uploadId ?? this.uploadId),
+        uploadedParts: uploadedParts ?? this.uploadedParts,
         tags: tags ?? this.tags,
         description: clearDescription ? null : (description ?? this.description),
       );
@@ -135,6 +144,8 @@ class SharedFile {
         's3Key': s3Key,
         'uploadProgress': uploadProgress,
         'uploadError': uploadError,
+        'uploadId': uploadId,
+        'uploadedParts': uploadedParts,
         'tags': tags,
         'description': description,
       };
@@ -152,6 +163,8 @@ class SharedFile {
         s3Key: json['s3Key'] as String?,
         uploadProgress: (json['uploadProgress'] as num?)?.toDouble(),
         uploadError: json['uploadError'] as String?,
+        uploadId: json['uploadId'] as String?,
+        uploadedParts: json['uploadedParts'] as String?,
         tags: (json['tags'] as List?)?.cast<String>() ?? [],
         description: json['description'] as String?,
       );
