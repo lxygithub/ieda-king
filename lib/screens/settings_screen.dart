@@ -141,8 +141,11 @@ class SettingsScreen extends StatelessWidget {
               )),
     );
     if (ok == true && context.mounted) {
+      // Force logout so user re-logs in with new password
       ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('密码已修改')));
+          const SnackBar(content: Text('密码已修改，请重新登录')));
+      Navigator.of(context).popUntil((r) => r.isFirst);
+      await context.read<AuthProvider>().logout();
     }
   }
 
