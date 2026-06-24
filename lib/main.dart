@@ -27,16 +27,20 @@ Future<void> _initMySQL() async {
 }
 
 Future<void> _initS3() async {
-  final s3 = S3Service();
-  await s3.loadConfig();
-  if (!s3.isConfigured) {
+  try {
+    final s3 = S3Service();
+    // Always save fresh config to ensure correct format (endpoint without protocol)
     await s3.saveConfig(const S3Config(
-      endpoint: 'http://192.227.212.20:13900',
+      endpoint: '192.227.212.20',
+      port: 13900,
       accessKey: 'GKcda0ccd3a856a1c1e1bd46b7',
       secretKey: '61a143bedcaa3379ced011172aae03ce1048e2b4ed44c8394a418f03af4db00a',
       bucket: 'idea-king',
       region: 'garage',
     ));
+    debugPrint('[S3] config saved');
+  } catch (e) {
+    debugPrint('[S3] init error: $e');
   }
 }
 

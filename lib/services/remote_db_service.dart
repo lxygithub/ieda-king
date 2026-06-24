@@ -88,7 +88,7 @@ class RemoteDbService {
             uploadProgress DOUBLE,
             uploadError TEXT,
             description TEXT,
-            tags TEXT NOT NULL DEFAULT '[]'
+            tags TEXT NOT NULL
           )
         ''');
         _tableChecked = true;
@@ -96,6 +96,7 @@ class RemoteDbService {
       return _conn;
     } catch (e) {
       debugPrint('[MySQL] connection failed: $e');
+      _conn = null;
       return null;
     }
   }

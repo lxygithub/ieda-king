@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -251,35 +250,21 @@ class TimelineProvider extends ChangeNotifier {
     await s3.loadConfig();
     if (!s3.isConfigured) { debugPrint('[S3] skip: not configured'); return; }
 
-    // Compute content hash for dedup key
-    final uploadFile = File(uploadPath);
-    final bytes = await uploadFile.readAsBytes();
-    final hash = sha256.convert(bytes).toString();
-    // Sanitize filename: ASCII only, strip special chars, limit length
+    // Sanitize filename: ASCII only, strip special chars
     final safeName = file.name
         .replaceAll(RegExp(r'[<>:"/\\|?*]'), '_')
         .replaceAll(RegExp(r'\s+'), '_')
         .replaceAll(RegExp(r'[^\x20-\x7E]'), '_');
     final truncated = safeName.length > 60 ? safeName.substring(0, 60) : safeName;
-    final s3Key = 'files/$hash/$truncated';
+    final d = file.receivedAt.toLocal();
+    String pad(int n) => n.toString().padLeft(2, '0');
+    final dateDir = '${d.year}/${pad(d.month)}/${pad(d.day)}';
+    final s3Key = 'files/$dateDir/${pad(d.hour)}_${pad(d.minute)}_${pad(d.second)}_$truncated';
 
     // Mark as uploading
     _files[idx] = _files[idx].copyWith(uploadProgress: 0.01, clearUploadError: true);
     notifyListeners();
 
-    // Check if same content already exists on S3 (GET Range is reliable)
-    try {
-      if (await s3.fileExists(s3Key)) {
-        debugPrint('[S3] file already on S3, skipping upload');
-        _files[idx] = _files[idx].copyWith(s3Key: s3Key, clearUploadProgress: true, clearUploadError: true);
-        notifyListeners();
-        await DatabaseService.updateFile(_files[idx]);
-        RemoteDbService.upsertFile(_files[idx]);
-        return;
-      }
-    } catch (_) {
-      debugPrint('[S3] fileExists check failed, proceeding with upload');
-    }
 
     try {
       double lastNotified = 0;
@@ -288,7 +273,7 @@ class TimelineProvider extends ChangeNotifier {
         s3Key: s3Key,
         onProgress: (p) {
           _files[idx] = _files[idx].copyWith(uploadProgress: p);
-          if (p >= 1.0 || p - lastNotified >= 0.05 || lastNotified == 0) {
+          if (p >= 1.0 || p - lastNotified >= 0.02 || lastNotified == 0) {
             lastNotified = p;
             notifyListeners();
           }
@@ -307,20 +292,25 @@ class TimelineProvider extends ChangeNotifier {
     await _persist();
   }
 
-  /// Upload all existing files that don't have an s3Key yet
+  /// Upload all files with concurrency limit of 3
   void _uploadPendingFiles() {
     debugPrint('[S3] _uploadPendingFiles called');
     final s3 = S3Service();
     s3.loadConfig().then((_) {
       debugPrint('[S3] loadConfig done, configured=${s3.isConfigured}');
       if (!s3.isConfigured) return;
-      debugPrint('[S3] checking ${_files.length} files for upload');
-      for (final f in _files) {
-        if (f.s3Key != null) { debugPrint('[S3] skip ${f.id}: already has s3Key'); continue; }
-        if (f.localPath == null) { debugPrint('[S3] skip ${f.id}: no local path'); continue; }
-        debugPrint('[S3] uploading ${f.id} (${f.name})');
-        _uploadToS3(f);
+      final pending = _files.where((f) => f.s3Key == null && f.localPath != null).toList();
+      debugPrint('[S3] ${pending.length} files to upload (max 3 concurrent)');
+      int running = 0;
+      const maxConcurrent = 3;
+      void startNext() {
+        while (running < maxConcurrent && pending.isNotEmpty) {
+          final f = pending.removeAt(0);
+          running++;
+          _uploadToS3(f).then((_) => running--).then((_) => startNext());
+        }
       }
+      startNext();
     });
   }
 
@@ -403,6 +393,10 @@ class TimelineProvider extends ChangeNotifier {
       }
       _files = await DatabaseService.loadFiles();
       debugPrint('[S3] loadFromDisk: ${_files.length} files loaded');
+      // Sync all local files to MySQL (remote backup)
+      for (final f in _files) {
+        RemoteDbService.upsertFile(f);
+      }
       _uploadPendingFiles();
       _retryStuckFiles();
       _restoreFromS3();

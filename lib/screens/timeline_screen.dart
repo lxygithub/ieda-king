@@ -278,7 +278,7 @@ class _TimelineScreenState extends State<TimelineScreen> {
   // ===== Type filter =====
 
   Widget _buildFailedBanner(ThemeData theme, TimelineProvider provider) {
-    final failed = provider.files.where((f) => f.s3Key == null && (f.uploadError != null || f.uploadProgress != null)).length;
+    final failed = provider.files.where((f) => f.s3Key == null && f.uploadError != null).length;
     if (failed == 0) return const SizedBox.shrink();
     return Container(
       width: double.infinity,
