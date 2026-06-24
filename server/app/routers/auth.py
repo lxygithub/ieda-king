@@ -4,7 +4,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.user import User
+from app.dependencies import get_current_user
 from app.schemas.auth import (
+    ChangePasswordRequest,
+    ChangeUsernameRequest,
     LoginRequest,
     RegisterRequest,
     RegisterResponse,
@@ -87,3 +90,33 @@ async def login(
         username=user.username,
         is_admin=user.is_admin,
     )
+
+
+@router.post("/change-password")
+async def change_password(
+    req: ChangePasswordRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if not verify_password(req.old_password, user.password_hash):
+        raise HTTPException(status_code=400, detail="原密码错误")
+    user.password_hash = hash_password(req.new_password)
+    return {"success": True, "message": "密码已修改"}
+
+
+@router.post("/change-username")
+async def change_username(
+    req: ChangeUsernameRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if user.is_admin:
+        raise HTTPException(status_code=403, detail="管理员不可修改用户名")
+    # Check duplicate
+    result = await db.execute(
+        select(User).where(User.username == req.new_username)
+    )
+    if result.scalar_one_or_none():
+        raise HTTPException(status_code=409, detail="用户名已被使用")
+    user.username = req.new_username
+    return {"success": True, "message": "用户名已修改"}

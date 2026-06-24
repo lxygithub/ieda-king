@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../providers/auth_provider.dart';
 import '../providers/timeline_provider.dart';
+import '../services/api_service.dart';
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
@@ -27,6 +28,20 @@ class SettingsScreen extends StatelessWidget {
                   leading: const Icon(Icons.person_outline),
                   title: Text(auth.username ?? '未登录'),
                   subtitle: Text(auth.isAdmin ? '管理员' : '普通用户'),
+                ),
+                const Divider(height: 1, indent: 16, endIndent: 16),
+                if (!auth.isAdmin)
+                  ListTile(
+                    leading: const Icon(Icons.edit_outlined),
+                    title: const Text('修改用户名'),
+                    onTap: () => _showChangeUsername(context),
+                  ),
+                if (!auth.isAdmin)
+                  const Divider(height: 1, indent: 16, endIndent: 16),
+                ListTile(
+                  leading: const Icon(Icons.lock_outline),
+                  title: const Text('修改密码'),
+                  onTap: () => _showChangePassword(context),
                 ),
                 const Divider(height: 1, indent: 16, endIndent: 16),
                 ListTile(
@@ -69,6 +84,108 @@ class SettingsScreen extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  Future<void> _showChangePassword(BuildContext context) async {
+    final oldCtrl = TextEditingController();
+    final newCtrl = TextEditingController();
+    final confirmCtrl = TextEditingController();
+    String? error;
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+          builder: (ctx, setDialogState) => AlertDialog(
+                title: const Text('修改密码'),
+                content: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(controller: oldCtrl, obscureText: true,
+                        decoration: const InputDecoration(labelText: '当前密码', border: OutlineInputBorder())),
+                    const SizedBox(height: 12),
+                    TextField(controller: newCtrl, obscureText: true,
+                        decoration: const InputDecoration(labelText: '新密码(至少6位)', border: OutlineInputBorder())),
+                    const SizedBox(height: 12),
+                    TextField(controller: confirmCtrl, obscureText: true,
+                        decoration: const InputDecoration(labelText: '确认新密码', border: OutlineInputBorder())),
+                    if (error != null)
+                      Padding(padding: const EdgeInsets.only(top: 8),
+                          child: Text(error!, style: const TextStyle(color: Colors.red, fontSize: 13))),
+                  ],
+                ),
+                actions: [
+                  TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
+                  TextButton(onPressed: () async {
+                    if (newCtrl.text.length < 6) {
+                      setDialogState(() => error = '密码至少6位');
+                      return;
+                    }
+                    if (newCtrl.text != confirmCtrl.text) {
+                      setDialogState(() => error = '两次密码不一致');
+                      return;
+                    }
+                    try {
+                      await ApiService.instance.changePassword(oldCtrl.text, newCtrl.text);
+                      if (ctx.mounted) Navigator.pop(ctx, true);
+                    } on ApiException catch (e) {
+                      setDialogState(() => error = e.message);
+                    } catch (e) {
+                      setDialogState(() => error = '请求失败: $e');
+                    }
+                  }, child: const Text('确认')),
+                ],
+              )),
+    );
+    if (ok == true && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('密码已修改')));
+    }
+  }
+
+  Future<void> _showChangeUsername(BuildContext context) async {
+    final ctrl = TextEditingController();
+    String? error;
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+          builder: (ctx, setDialogState) => AlertDialog(
+                title: const Text('修改用户名'),
+                content: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(controller: ctrl,
+                        decoration: const InputDecoration(
+                            labelText: '新用户名(至少3位)', border: OutlineInputBorder())),
+                    if (error != null)
+                      Padding(padding: const EdgeInsets.only(top: 8),
+                          child: Text(error!, style: const TextStyle(color: Colors.red, fontSize: 13))),
+                  ],
+                ),
+                actions: [
+                  TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
+                  TextButton(onPressed: () async {
+                    if (ctrl.text.trim().length < 3) {
+                      setDialogState(() => error = '用户名至少3位');
+                      return;
+                    }
+                    try {
+                      await ApiService.instance.changeUsername(ctrl.text.trim());
+                      if (ctx.mounted) Navigator.pop(ctx, true);
+                    } on ApiException catch (e) {
+                      setDialogState(() => error = e.message);
+                    } catch (e) {
+                      setDialogState(() => error = '请求失败: $e');
+                    }
+                  }, child: const Text('确认')),
+                ],
+              )),
+    );
+    if (ok == true && context.mounted) {
+      await context.read<AuthProvider>().init(); // reload username from prefs
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('用户名已修改')));
+    }
   }
 
   Future<void> _confirmLogout(BuildContext context) async {

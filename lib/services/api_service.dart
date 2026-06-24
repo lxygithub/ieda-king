@@ -72,6 +72,36 @@ class ApiService {
     throw ApiException(resp.statusCode, detail);
   }
 
+  // ========== Account management ==========
+
+  Future<Map<String, dynamic>> changePassword(
+      String oldPassword, String newPassword) async {
+    final resp = await http
+        .post(
+          Uri.parse('$baseUrl/api/auth/change-password'),
+          headers: _headers,
+          body: jsonEncode(
+              {'old_password': oldPassword, 'new_password': newPassword}),
+        )
+        .timeout(const Duration(seconds: 15));
+    _checkAuth(resp);
+    if (resp.statusCode == 200) return jsonDecode(resp.body) as Map<String, dynamic>;
+    throw ApiException(resp.statusCode, _detail(resp));
+  }
+
+  Future<Map<String, dynamic>> changeUsername(String newUsername) async {
+    final resp = await http
+        .post(
+          Uri.parse('$baseUrl/api/auth/change-username'),
+          headers: _headers,
+          body: jsonEncode({'new_username': newUsername}),
+        )
+        .timeout(const Duration(seconds: 15));
+    _checkAuth(resp);
+    if (resp.statusCode == 200) return jsonDecode(resp.body) as Map<String, dynamic>;
+    throw ApiException(resp.statusCode, _detail(resp));
+  }
+
   // ========== Upload ==========
 
   /// Upload file binary to API. API uploads to S3, returns s3Key.

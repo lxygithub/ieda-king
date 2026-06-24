@@ -240,3 +240,40 @@ async def delete_user(
         return RedirectResponse(url="/admin/users?error=self", status_code=303)
     await db.delete(user)  # cascade deletes files
     return RedirectResponse(url="/admin/users", status_code=303)
+
+
+@router.post("/users/{user_id}/change-password")
+async def admin_change_password(
+    user_id: int,
+    new_password: str = Form(...),
+    db: AsyncSession = Depends(get_db),
+    _=Depends(_require_admin),
+):
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    from app.services.auth_service import hash_password as _hash
+    user.password_hash = _hash(new_password)
+    return RedirectResponse(url=f"/admin/users/{user_id}", status_code=303)
+
+
+@router.post("/users/{user_id}/change-username")
+async def admin_change_username(
+    user_id: int,
+    new_username: str = Form(...),
+    db: AsyncSession = Depends(get_db),
+    _=Depends(_require_admin),
+):
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if user.is_admin:
+        return RedirectResponse(url=f"/admin/users/{user_id}?error=admin_cannot_change_username", status_code=303)
+    # Check duplicate
+    dup = await db.execute(select(User).where(User.username == new_username))
+    if dup.scalar_one_or_none():
+        raise HTTPException(status_code=409, detail="Username already taken")
+    user.username = new_username
+    return RedirectResponse(url=f"/admin/users/{user_id}", status_code=303)
