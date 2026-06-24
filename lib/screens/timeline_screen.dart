@@ -150,7 +150,9 @@ class _TimelineScreenState extends State<TimelineScreen> {
           ),
         ],
       ),
-      body: Consumer<TimelineProvider>(
+      body: RefreshIndicator(
+        onRefresh: () => context.read<TimelineProvider>().fetchFromApi(),
+        child: Consumer<TimelineProvider>(
         builder: (_, provider, __) {
           return Stack(
             children: [
@@ -182,6 +184,7 @@ class _TimelineScreenState extends State<TimelineScreen> {
           );
         },
       ),
+        ),
       bottomNavigationBar: _selectedIds.isNotEmpty
           ? _buildSelectionBar()
           : null,
