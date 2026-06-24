@@ -11,7 +11,7 @@ import 'screens/register_screen.dart';
 import 'screens/timeline_screen.dart';
 import 'services/api_service.dart';
 
-const _apiBaseUrl = 'http://192.227.212.20:8080';
+const _apiBaseUrl = 'http://192.227.212.20:18900';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
