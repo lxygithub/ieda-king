@@ -1,3 +1,4 @@
+import json
 from datetime import datetime
 from typing import Any
 
@@ -54,10 +55,14 @@ async def ensure_table(db: AsyncSession, user_id: int):
 def row_to_dict(row) -> dict[str, Any]:
     """Convert a raw DB row (RowMapping) to the API response format."""
     d = dict(row)
-    # receivedAt might be datetime or string from shared table
-    if d.get("receivedAt"):
-        if hasattr(d["receivedAt"], "isoformat"):
-            d["receivedAt"] = d["receivedAt"].isoformat()
+    if d.get("receivedAt") and hasattr(d["receivedAt"], "isoformat"):
+        d["receivedAt"] = d["receivedAt"].isoformat()
+    # tags stored as JSON string in DB, Flutter expects List
+    if "tags" in d and isinstance(d["tags"], str):
+        try:
+            d["tags"] = json.loads(d["tags"])
+        except (json.JSONDecodeError, TypeError):
+            d["tags"] = []
     return d
 
 
