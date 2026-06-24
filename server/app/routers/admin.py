@@ -7,7 +7,6 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.models.file_record import FileRecord
 from app.models.user import User
 from app.services.auth_service import verify_password
 
@@ -94,9 +93,11 @@ async def dashboard(
     user_count = (
         await db.execute(select(func.count()).select_from(User))
     ).scalar_one()
-    file_count = (
-        await db.execute(select(func.count()).select_from(FileRecord))
-    ).scalar_one()
+    # Count files across all per-user tables
+    file_count = 0
+    all_users = (await db.execute(select(User))).scalars().all()
+    for u in all_users:
+        file_count += await file_service.count_user_files(db, u.id)
     return HTMLResponse(
         _render(
             "dashboard.html",

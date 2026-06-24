@@ -4,6 +4,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.responses import FileResponse
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -117,7 +118,6 @@ async def download_file(
 
     # Fallback: shared table
     if not record:
-        from sqlalchemy import text
         result = await db.execute(
             text("SELECT * FROM files WHERE id = :id"),
             {"id": file_id},

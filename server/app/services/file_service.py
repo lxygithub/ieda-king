@@ -13,9 +13,6 @@ def _table_name(user_id: int) -> str:
     return f"files_{_storage_id(user_id)}"
 
 
-# Shared table for legacy/backward-compat reads
-_SHARED_TABLE = "files"
-
 # Columns shared between per-user tables and the shared table
 _COLS = (
     "id", "name", "type", "localPath", "textContent", "sourceUri",
@@ -69,54 +66,25 @@ def row_to_dict(row) -> dict[str, Any]:
 async def get_user_files(
     db: AsyncSession, user_id: int
 ) -> list[dict]:
-    """Fetch files from per-user table first, then shared table."""
+    """Fetch files from per-user table."""
+    await ensure_table(db, user_id)
     table = _table_name(user_id)
-    rows = []
-    # Per-user table
     try:
         result = await db.execute(
             text(f"SELECT {_COLS_STR} FROM {table} ORDER BY receivedAt DESC")
         )
-        rows = [row_to_dict(r) for r in result.mappings().all()]
+        return [row_to_dict(r) for r in result.mappings().all()]
     except Exception:
-        pass  # table may not exist yet
-    # Also fetch from shared table for legacy data
-    try:
-        result = await db.execute(
-            text(f"SELECT {_COLS_STR} FROM {_SHARED_TABLE} WHERE user_id = :uid ORDER BY receivedAt DESC"),
-            {"uid": user_id},
-        )
-        shared_rows = [row_to_dict(r) for r in result.mappings().all()]
-        # Merge: per-user takes priority, dedup by id
-        seen = {r["id"] for r in rows}
-        for r in shared_rows:
-            if r["id"] not in seen:
-                rows.append(r)
-    except Exception:
-        pass
-    return rows
+        return []
 
 
 async def get_all_files(
     db: AsyncSession, user_id: int | None = None
 ) -> list[dict]:
-    """Admin: fetch from all tables. Slow for large datasets."""
-    rows = []
-    # Shared table
-    try:
-        if user_id:
-            result = await db.execute(
-                text(f"SELECT {_COLS_STR}, user_id FROM {_SHARED_TABLE} WHERE user_id = :uid ORDER BY receivedAt DESC"),
-                {"uid": user_id},
-            )
-        else:
-            result = await db.execute(
-                text(f"SELECT {_COLS_STR}, user_id FROM {_SHARED_TABLE} ORDER BY receivedAt DESC LIMIT 200")
-            )
-        rows = [row_to_dict(r) for r in result.mappings().all()]
-    except Exception:
-        pass
-    return rows
+    """Admin: fetch files for a specific user."""
+    if user_id:
+        return await get_user_files(db, user_id)
+    return []
 
 
 async def create_file(
@@ -133,7 +101,7 @@ async def create_file(
     cols = ", ".join(data.keys())
     vals = ", ".join(f":{k}" for k in data.keys())
     await db.execute(
-        text(f"INSERT INTO {table} ({cols}) VALUES ({vals})"),
+        text(f"REPLACE INTO {table} ({cols}) VALUES ({vals})"),
         data,
     )
     return data
@@ -160,29 +128,27 @@ async def delete_user_file(
         text(f"DELETE FROM {table} WHERE id = :id"),
         {"id": file_id},
     )
-    if result.rowcount > 0:
-        return True
-    # Also try shared table (legacy)
-    result = await db.execute(
-        text(f"DELETE FROM {_SHARED_TABLE} WHERE id = :id AND user_id = :uid"),
-        {"id": file_id, "uid": user_id},
-    )
-    return result.rowcount > 0
+    return result.rowcount > 0 if result.rowcount else False
 
 
 async def delete_file_as_admin(
     db: AsyncSession, file_id: str
 ) -> bool:
-    """Delete from any table. Try shared, then any per-user table."""
-    # Try shared table
-    result = await db.execute(
-        text(f"DELETE FROM {_SHARED_TABLE} WHERE id = :id"),
-        {"id": file_id},
-    )
-    if result.rowcount > 0:
-        return True
-    # For per-user tables, we need to search. Try common ones.
-    # This is a limitation — admin delete on per-user tables requires knowing the user.
+    """Delete file from any user's table (admin only)."""
+    # Try to find which user owns this file
+    from sqlalchemy import select
+    from app.models.user import User
+    users = await db.execute(select(User))
+    for u in users.scalars().all():
+        try:
+            r = await db.execute(
+                text(f"DELETE FROM {_table_name(u.id)} WHERE id = :id"),
+                {"id": file_id},
+            )
+            if r.rowcount and r.rowcount > 0:
+                return True
+        except Exception:
+            continue
     return False
 
 
@@ -191,13 +157,7 @@ async def clear_user_files(
 ) -> int:
     table = _table_name(user_id)
     result = await db.execute(text(f"DELETE FROM {table} WHERE 1=1"))
-    count = result.rowcount or 0
-    # Also clear shared table
-    result = await db.execute(
-        text(f"DELETE FROM {_SHARED_TABLE} WHERE user_id = :uid"),
-        {"uid": user_id},
-    )
-    return count + (result.rowcount or 0)
+    return result.rowcount or 0
 
 
 async def count_user_files(
