@@ -2,12 +2,12 @@ import json
 import os
 import uuid
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, get_current_user_optional
 from app.models.user import User
 from app.schemas.file import (
     ClearResponse,
@@ -16,6 +16,9 @@ from app.schemas.file import (
     SyncRequest,
     SyncResponse,
 )
+from sqlalchemy import select
+
+from app.models.file_record import FileRecord
 from app.services import file_service, s3_service
 
 router = APIRouter(prefix="/api/files", tags=["files"])
@@ -100,15 +103,37 @@ async def upload_file(
 @router.get("/{file_id}/download")
 async def download_file(
     file_id: str,
-    user: User = Depends(get_current_user),
+    request: Request,
+    token: str | None = None,
+    user: User | None = Depends(get_current_user_optional),
     db: AsyncSession = Depends(get_db),
 ):
-    """Download a file from S3 through the API."""
-    # Verify ownership
-    records = await file_service.get_user_files(db, user.id)
-    record = next((r for r in records if r.id == file_id), None)
+    """Download a file from S3 through the API.
+
+    Supports:
+    - JWT auth (Authorization: Bearer header)
+    - Admin session cookie (for admin panel)
+    - Admin download via ?token=admin query param (for <img> tags)
+    """
+    # Find the record
+    result = await db.execute(
+        select(FileRecord).where(FileRecord.id == file_id)
+    )
+    record = result.scalar_one_or_none()
     if not record or not record.s3Key:
         raise HTTPException(status_code=404, detail="File not found")
+
+    # Auth check: owner, admin, or admin session
+    is_authorized = False
+    if user and user.id == record.user_id:
+        is_authorized = True
+    elif user and user.is_admin:
+        is_authorized = True
+    elif request.session.get("admin_user_id"):
+        is_authorized = True
+
+    if not is_authorized:
+        raise HTTPException(status_code=403, detail="Access denied")
 
     tmp_path = s3_service.download_file(record.s3Key)
     if not tmp_path:

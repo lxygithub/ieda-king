@@ -46,7 +46,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
     setState(() => _error = null);
     try {
       await context.read<AuthProvider>().register(name, pass);
-      // AuthProvider already auto-login; Consumer in main.dart navigates
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('注册成功，已自动登录')),
+      );
+      // Pop back so auth gate in main.dart shows TimelineScreen
+      Navigator.of(context).popUntil((r) => r.isFirst);
     } on ApiException catch (e) {
       final msg = e.message.contains('already taken')
           ? '用户名已被使用'

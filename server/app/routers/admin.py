@@ -124,6 +124,7 @@ async def users_list(
             request=request,
             users=users,
             admin_username=request.session.get("admin_username"),
+            admin_user_id=request.session.get("admin_user_id"),
         )
     )
 
@@ -193,3 +194,57 @@ async def delete_file(
 
     await delete_file_as_admin(db, file_id)
     return RedirectResponse(url="/admin/files", status_code=303)
+
+
+@router.post("/users/create")
+async def create_user(
+    request: Request,
+    username: str = Form(...),
+    password: str = Form(...),
+    is_admin: str | None = Form(None),
+    db: AsyncSession = Depends(get_db),
+    _=Depends(_require_admin),
+):
+    from app.services.auth_service import hash_password
+
+    # Check duplicate
+    result = await db.execute(
+        select(User).where(User.username == username)
+    )
+    if result.scalar_one_or_none():
+        return HTMLResponse(
+            _render(
+                "users.html",
+                request=request,
+                users=(await db.execute(select(User).order_by(User.created_at.desc()))).scalars().all(),
+                admin_username=request.session.get("admin_username"),
+                admin_user_id=request.session.get("admin_user_id"),
+                error="用户名已存在",
+            )
+        )
+    user = User(
+        username=username,
+        password_hash=hash_password(password),
+        is_admin=(is_admin == "on"),
+    )
+    db.add(user)
+    return RedirectResponse(url="/admin/users", status_code=303)
+
+
+@router.post("/users/{user_id}/delete")
+async def delete_user(
+    request: Request,
+    user_id: int,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(_require_admin),
+):
+    """Delete user and all their files (cascade)."""
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if user.id == request.session.get("admin_user_id"):
+        # Cannot delete yourself
+        return RedirectResponse(url="/admin/users?error=self", status_code=303)
+    await db.delete(user)  # cascade deletes files
+    return RedirectResponse(url="/admin/users", status_code=303)

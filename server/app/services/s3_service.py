@@ -18,6 +18,7 @@ def _get_client() -> Minio:
             settings.s3_endpoint,
             access_key=settings.s3_access_key,
             secret_key=settings.s3_secret_key,
+            region=settings.s3_region,
             secure=False,  # HTTP, not HTTPS
         )
     return _client

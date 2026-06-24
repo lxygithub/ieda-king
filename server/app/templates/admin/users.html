@@ -2,6 +2,32 @@
 {% block title %}用户管理{% endblock %}
 {% block content %}
 <h1>用户列表</h1>
+
+{% if error %}
+<p class="error-msg">{{ error }}</p>
+{% endif %}
+
+{% if request.query_params.get('error') == 'self' %}
+<p class="error-msg">不能删除自己的账号</p>
+{% endif %}
+
+<!-- Create User -->
+<details class="create-form">
+    <summary class="btn btn-primary" style="display:inline-block;cursor:pointer;margin-bottom:16px">+ 创建用户</summary>
+    <div style="background:#fff;padding:16px;border-radius:8px;margin-bottom:16px;box-shadow:0 1px 4px rgba(0,0,0,0.08)">
+        <form method="post" action="/admin/users/create">
+            <div style="display:flex;gap:12px;flex-wrap:wrap">
+                <input type="text" name="username" placeholder="用户名" required style="padding:8px;border:1px solid #ddd;border-radius:4px;flex:1;min-width:150px">
+                <input type="password" name="password" placeholder="密码" required style="padding:8px;border:1px solid #ddd;border-radius:4px;flex:1;min-width:150px">
+                <label style="display:flex;align-items:center;gap:4px">
+                    <input type="checkbox" name="is_admin"> 管理员
+                </label>
+                <button type="submit" class="btn btn-primary">创建</button>
+            </div>
+        </form>
+    </div>
+</details>
+
 <table class="table">
     <thead>
         <tr>
@@ -9,6 +35,7 @@
             <th>用户名</th>
             <th>管理员</th>
             <th>注册时间</th>
+            <th>文件数</th>
             <th>操作</th>
         </tr>
     </thead>
@@ -17,9 +44,17 @@
         <tr>
             <td>{{ u.id }}</td>
             <td>{{ u.username }}</td>
-            <td>{% if u.is_admin %}✅{% else %}{% endif %}</td>
+            <td>{% if u.is_admin %}✅{% endif %}</td>
             <td>{{ u.created_at }}</td>
-            <td><a href="/admin/users/{{ u.id }}" class="btn btn-sm">查看文件</a></td>
+            <td><a href="/admin/users/{{ u.id }}">查看</a></td>
+            <td>
+                <a href="/admin/users/{{ u.id }}" class="btn btn-sm">文件</a>
+                {% if u.id != admin_user_id %}
+                <form method="post" action="/admin/users/{{ u.id }}/delete" style="display:inline" onsubmit="return confirm('确定删除用户 {{ u.username }}? 其所有文件也将被删除!')">
+                    <button type="submit" class="btn btn-danger btn-sm">删除</button>
+                </form>
+                {% endif %}
+            </td>
         </tr>
         {% endfor %}
     </tbody>

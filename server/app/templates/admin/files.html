@@ -6,11 +6,12 @@
     <thead>
         <tr>
             <th>ID</th>
-            <th>用户ID</th>
+            <th>用户</th>
             <th>文件名</th>
             <th>类型</th>
             <th>大小</th>
             <th>S3</th>
+            <th>预览</th>
             <th>接收时间</th>
             <th>操作</th>
         </tr>
@@ -18,21 +19,35 @@
     <tbody>
         {% for f in files %}
         <tr>
-            <td>{{ f.id }}</td>
+            <td style="font-size:11px">{{ f.id[:8] }}..</td>
             <td>{{ f.user_id }}</td>
             <td>{{ f.name }}</td>
             <td>{{ f.type }}</td>
             <td>{% if f.fileSize %}{{ (f.fileSize / 1024)|round(1) }} KB{% else %}-{% endif %}</td>
             <td>{% if f.s3Key %}✅{% else %}❌{% endif %}</td>
-            <td>{{ f.receivedAt }}</td>
             <td>
-                <form method="post" action="/admin/files/{{ f.id }}/delete" onsubmit="return confirm('确定删除文件 #{{ f.id }}?')">
+                {% if f.type == 'image' and f.s3Key %}
+                <a href="/api/files/{{ f.id }}/download?token=admin" target="_blank">
+                    <img src="/api/files/{{ f.id }}/download?token=admin" style="max-width:60px;max-height:60px;border-radius:4px;cursor:pointer" loading="lazy">
+                </a>
+                {% elif f.s3Key %}
+                <a href="/api/files/{{ f.id }}/download?token=admin" class="btn btn-sm">⬇ 下载</a>
+                {% else %}
+                <span style="color:#999">-</span>
+                {% endif %}
+            </td>
+            <td style="font-size:12px">{{ f.receivedAt|string|truncate(19, True, '') if f.receivedAt else '-' }}</td>
+            <td>
+                {% if f.s3Key %}
+                <a href="/api/files/{{ f.id }}/download?token=admin" class="btn btn-sm">⬇</a>
+                {% endif %}
+                <form method="post" action="/admin/files/{{ f.id }}/delete" style="display:inline" onsubmit="return confirm('确定删除文件 #{{ f.id }}?')">
                     <button type="submit" class="btn btn-danger btn-sm">删除</button>
                 </form>
             </td>
         </tr>
         {% else %}
-        <tr><td colspan="8" class="empty">暂无文件</td></tr>
+        <tr><td colspan="9" class="empty">暂无文件</td></tr>
         {% endfor %}
     </tbody>
 </table>
