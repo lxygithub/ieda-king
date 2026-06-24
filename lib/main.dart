@@ -10,28 +10,11 @@ import 'screens/login_screen.dart';
 import 'screens/register_screen.dart';
 import 'screens/timeline_screen.dart';
 import 'services/api_service.dart';
-import 'services/s3_service.dart';
 
 const _apiBaseUrl = 'http://192.227.212.20:8080';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
-  // Init S3 config (fire-and-forget; S3Service loads from SharedPrefs)
-  try {
-    final s3 = S3Service();
-    await s3.saveConfig(const S3Config(
-      endpoint: '192.227.212.20',
-      port: 3900,
-      accessKey: 'GKcda0ccd3a856a1c1e1bd46b7',
-      secretKey:
-          '61a143bedcaa3379ced011172aae03ce1048e2b4ed44c8394a418f03af4db00a',
-      bucket: 'idea-king',
-      region: 'garage',
-    ));
-  } catch (e) {
-    debugPrint('[init] S3 error: $e');
-  }
 
   // Init API base
   ApiService.instance.baseUrl = _apiBaseUrl;
@@ -79,7 +62,6 @@ class ShareTimelineApp extends StatelessWidget {
         brightness: Brightness.dark,
       ),
       themeMode: ThemeMode.system,
-      // Auth gate: show splash → login → timeline
       home: const _AppEntry(),
       routes: {
         '/login': (_) => const LoginScreen(),
@@ -126,7 +108,6 @@ class _ShareReceiverState extends State<_ShareReceiver> {
   }
 
   void _initShareListener() {
-    // Handle share while app was closed (cold start)
     ReceiveSharingIntent.instance
         .getInitialMedia()
         .then((List<SharedMediaFile> files) {
@@ -134,7 +115,6 @@ class _ShareReceiverState extends State<_ShareReceiver> {
       ReceiveSharingIntent.instance.reset();
     });
 
-    // Handle share while app is running (warm start)
     ReceiveSharingIntent.instance
         .getMediaStream()
         .listen((List<SharedMediaFile> files) {

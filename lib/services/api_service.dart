@@ -72,6 +72,40 @@ class ApiService {
     throw ApiException(resp.statusCode, detail);
   }
 
+  // ========== Upload ==========
+
+  /// Upload file binary to API. API uploads to S3, returns s3Key.
+  Future<Map<String, dynamic>> uploadFile(
+    String filePath, {
+    required String fileId,
+    required String name,
+    required String type,
+    String? mimeType,
+  }) async {
+    final request = http.MultipartRequest(
+      'POST',
+      Uri.parse('$baseUrl/api/files/upload'),
+    );
+    // Auth header
+    if (token != null) {
+      request.headers['Authorization'] = 'Bearer $token';
+    }
+    request.fields['file_id'] = fileId;
+    request.fields['name'] = name;
+    request.fields['type'] = type;
+    request.fields['mimeType'] = mimeType ?? 'application/octet-stream';
+    request.files.add(await http.MultipartFile.fromPath('file', filePath));
+
+    final streamedResp = await request.send().timeout(const Duration(minutes: 5));
+    final resp = await http.Response.fromStream(streamedResp);
+    _checkAuth(resp);
+    if (resp.statusCode == 200) {
+      return jsonDecode(resp.body) as Map<String, dynamic>;
+    }
+    // 502 = S3 upload failed on server
+    throw ApiException(resp.statusCode, _detail(resp));
+  }
+
   // ========== Files ==========
 
   Future<List<Map<String, dynamic>>> getFiles() async {
