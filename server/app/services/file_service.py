@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 
 def _storage_id(user_id: int) -> int:
-    return user_id + 9999999
+    return user_id + 999
 
 
 def _table_name(user_id: int) -> str:
@@ -143,6 +143,7 @@ async def update_file_s3(
     db: AsyncSession, user_id: int, file_id: str, s3_key: str, file_size: int, mime_type: str | None
 ):
     """Update s3Key + fileSize on an existing file."""
+    await ensure_table(db, user_id)
     table = _table_name(user_id)
     await db.execute(
         text(f"UPDATE {table} SET s3Key = :k, fileSize = :sz, mimeType = :mt WHERE id = :id"),
