@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../services/api_service.dart';
+import '../services/database_service.dart';
 
 /// Manages authentication state: token, current user, login/logout/register.
 class AuthProvider extends ChangeNotifier {
@@ -107,6 +108,8 @@ class AuthProvider extends ChangeNotifier {
     _error = null;
     ApiService.instance.token = null;
     await _persist();
+    // Clear local DB so next user doesn't see old data
+    await DatabaseService.clearAll();
     notifyListeners();
   }
 

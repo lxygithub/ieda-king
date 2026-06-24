@@ -327,6 +327,35 @@ class TimelineProvider extends ChangeNotifier {
     }
   }
 
+  /// Fetch files from API, replace local SQLite with server data.
+  /// Call after login to ensure user isolation.
+  Future<void> fetchFromApi() async {
+    _loading = true;
+    notifyListeners();
+    try {
+      final apiFiles = await ApiService.instance.getFiles();
+      debugPrint('[API] fetchFromApi: ${apiFiles.length} files from server');
+      // Replace local SQLite with API data
+      await DatabaseService.clearAll();
+      final parsed = apiFiles
+          .map((j) => SharedFile.fromJson(j))
+          .toList();
+      for (final f in parsed) {
+        await DatabaseService.insertFile(f);
+      }
+      _files = parsed;
+    } on TokenExpiredException {
+      // Token expired — logout handled by auth gate in main.dart
+      debugPrint('[API] token expired during fetch');
+    } catch (e) {
+      debugPrint('[API] fetchFromApi error: $e (using local cache)');
+      _files = await DatabaseService.loadFiles();
+    } finally {
+      _loading = false;
+      notifyListeners();
+    }
+  }
+
   // ===== Delete =====
 
   Future<void> deleteFile(SharedFile file) async {

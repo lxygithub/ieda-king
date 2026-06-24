@@ -104,7 +104,17 @@ class _ShareReceiverState extends State<_ShareReceiver> {
   @override
   void initState() {
     super.initState();
+    _initData();
     _initShareListener();
+  }
+
+  Future<void> _initData() async {
+    // Load local cache then refresh from API for user isolation
+    final tp = context.read<TimelineProvider>();
+    await tp.loadFromDisk();
+    if (mounted) {
+      await tp.fetchFromApi();
+    }
   }
 
   void _initShareListener() {
