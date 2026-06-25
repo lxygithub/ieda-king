@@ -30,8 +30,10 @@ class _TimelineScreenState extends State<TimelineScreen> {
   void initState() {
     super.initState();
     _loadViewPref();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<TimelineProvider>().loadFromDisk();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final p = context.read<TimelineProvider>();
+      await p.loadFromDisk();
+      if (mounted) await p.fetchFromApi();
     });
   }
 
@@ -114,7 +116,7 @@ class _TimelineScreenState extends State<TimelineScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: _showSearch ? _buildSearchField() : Text(AppLocalizations.of(context).timeline),
+        title: _showSearch ? _buildSearchField() : const Text(""),
         centerTitle: !_showSearch,
         leading: Consumer<TimelineProvider>(
           builder: (_, provider, __) {
@@ -138,6 +140,14 @@ class _TimelineScreenState extends State<TimelineScreen> {
                       tooltip: _isGridView ? AppLocalizations.of(context).listView : AppLocalizations.of(context).gridView,
                       onPressed: _toggleView,
                     ),
+                  Consumer<TimelineProvider>(
+                    builder: (_, p, __) => IconButton(
+                      icon: Icon(Icons.date_range,
+                          color: p.hasDateFilter ? Theme.of(context).colorScheme.primary : null),
+                      tooltip: p.hasDateFilter ? '清除日期筛选' : '日期筛选',
+                      onPressed: () => _pickDateRange(context, p),
+                    ),
+                  ),
                   IconButton(
                     icon: const Icon(Icons.settings_outlined),
                     tooltip: '设置',
@@ -161,6 +171,9 @@ class _TimelineScreenState extends State<TimelineScreen> {
             children: [
               if (!provider.initialized && provider.loading)
                 const Center(child: CircularProgressIndicator())
+              else if (provider.loading)
+                const Positioned(top: 0, left: 0, right: 0,
+                  child: LinearProgressIndicator())
               else if (provider.files.isEmpty)
                 _buildEmptyState(theme)
               else
@@ -169,6 +182,7 @@ class _TimelineScreenState extends State<TimelineScreen> {
                     if (provider.isSearching || provider.hasTypeFilter)
                       _buildSearchBar(theme, provider),
                     _buildTypeFilter(theme, provider),
+                    _buildDateFilterBanner(theme, provider),
                     _buildFailedBanner(theme, provider),
                     Expanded(
                       child: _isGridView
@@ -278,6 +292,32 @@ class _TimelineScreenState extends State<TimelineScreen> {
 
   // ===== Type filter =====
 
+  Widget _buildDateFilterBanner(ThemeData theme, TimelineProvider provider) {
+    if (!provider.hasDateFilter) return const SizedBox.shrink();
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      child: Row(
+        children: [
+          const Icon(Icons.date_range, size: 14, color: Colors.blue),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              '${provider.startDate!.toIso8601String().substring(0, 10)} ~ ${provider.endDate!.toIso8601String().substring(0, 10)}',
+              style: theme.textTheme.bodySmall?.copyWith(color: Colors.blue),
+            ),
+          ),
+          TextButton.icon(
+            icon: const Icon(Icons.clear, size: 14),
+            label: const Text('清除筛选', style: TextStyle(fontSize: 12)),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            onPressed: () => provider.clearDateFilter(),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildFailedBanner(ThemeData theme, TimelineProvider provider) {
     final failed = provider.files.where((f) => f.s3Key == null && f.uploadError != null).length;
     if (failed == 0) return const SizedBox.shrink();
@@ -355,6 +395,24 @@ class _TimelineScreenState extends State<TimelineScreen> {
     setState(() => _showSearch = !_showSearch);
   }
 
+  Future<void> _pickDateRange(BuildContext context, TimelineProvider provider) async {
+    final now = DateTime.now();
+    final initial = provider.hasDateFilter
+        ? DateTimeRange(start: provider.startDate!, end: provider.endDate!)
+        : DateTimeRange(start: now.subtract(const Duration(days: 7)), end: now);
+    final picked = await showDateRangePicker(
+      context: context,
+      firstDate: now.subtract(const Duration(days: 365)),
+      lastDate: now,
+      initialDateRange: initial,
+      confirmText: '确定',
+      saveText: '确定',
+    );
+    if (picked != null) {
+      await provider.setDateRange(picked.start, picked.end);
+    }
+  }
+
   // ===== Empty =====
 
   Widget _buildEmptyState(ThemeData theme) {
@@ -384,23 +442,43 @@ class _TimelineScreenState extends State<TimelineScreen> {
     final grouped = provider.groupedByDay;
     final dates = grouped.keys.toList();
 
-    return ListView.builder(
-      padding: const EdgeInsets.only(top: 8, bottom: 100),
-      itemCount: dates.length,
-      itemBuilder: (context, index) {
-        final date = dates[index];
-        final files = grouped[date]!;
-        return DayGroup(
-          dateStr: date,
-          files: files,
-          onTap: _openDetail,
-          onDeleteAll: () => _confirmDeleteDay(date, files),
-          query: query,
-          selectedIds: _selectedIds,
-          onToggleSelection: _toggleSelection,
-          onRetry: (id) => context.read<TimelineProvider>().retryUpload(id),
-        );
+    return NotificationListener<ScrollNotification>(
+      onNotification: (notification) {
+        if (notification is ScrollEndNotification) {
+          final metrics = notification.metrics;
+          if (metrics.pixels >= metrics.maxScrollExtent - 200) {
+            context.read<TimelineProvider>().loadMore();
+          }
+        }
+        return false;
       },
+      child: ListView.builder(
+        padding: const EdgeInsets.only(top: 8, bottom: 100),
+        itemCount: dates.length + (provider.hasMore ? 1 : 0),
+        itemBuilder: (context, index) {
+          if (index == dates.length) {
+            return const Padding(
+              padding: EdgeInsets.all(16),
+              child: Center(child: SizedBox(
+                width: 20, height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )),
+            );
+          }
+          final date = dates[index];
+          final files = grouped[date]!;
+          return DayGroup(
+            dateStr: date,
+            files: files,
+            onTap: _openDetail,
+            onDeleteAll: () => _confirmDeleteDay(date, files),
+            query: query,
+            selectedIds: _selectedIds,
+            onToggleSelection: _toggleSelection,
+            onRetry: (id) => context.read<TimelineProvider>().retryUpload(id),
+          );
+        },
+      ),
     );
   }
 
@@ -410,14 +488,34 @@ class _TimelineScreenState extends State<TimelineScreen> {
     final grouped = provider.groupedByDay;
     final dates = grouped.keys.toList();
 
-    return ListView.builder(
-      padding: const EdgeInsets.only(top: 8, bottom: 100),
-      itemCount: dates.length,
-      itemBuilder: (context, index) {
-        final date = dates[index];
-        final files = grouped[date]!;
-        return _buildGridDayGroup(date, files, query);
+    return NotificationListener<ScrollNotification>(
+      onNotification: (notification) {
+        if (notification is ScrollEndNotification) {
+          final metrics = notification.metrics;
+          if (metrics.pixels >= metrics.maxScrollExtent - 200) {
+            context.read<TimelineProvider>().loadMore();
+          }
+        }
+        return false;
       },
+      child: ListView.builder(
+        padding: const EdgeInsets.only(top: 8, bottom: 100),
+        itemCount: dates.length + (provider.hasMore ? 1 : 0),
+        itemBuilder: (context, index) {
+          if (index == dates.length) {
+            return const Padding(
+              padding: EdgeInsets.all(16),
+              child: Center(child: SizedBox(
+                width: 20, height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )),
+            );
+          }
+          final date = dates[index];
+          final files = grouped[date]!;
+          return _buildGridDayGroup(date, files, query);
+        },
+      ),
     );
   }
 

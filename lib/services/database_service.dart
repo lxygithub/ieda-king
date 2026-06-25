@@ -90,11 +90,19 @@ class DatabaseService {
         'description': f.description,
       };
 
-  /// Load all files from DB, newest first
-  static Future<List<SharedFile>> loadFiles() async {
+  /// Load files from DB, newest first. Supports pagination.
+  static Future<List<SharedFile>> loadFiles({int? limit, int? offset}) async {
     final db = await database;
-    final rows = await db.query('files', orderBy: 'receivedAt DESC');
+    final rows = await db.query('files',
+        orderBy: 'receivedAt DESC', limit: limit, offset: offset);
     return rows.map(_rowToFile).toList();
+  }
+
+  /// Count all files in DB.
+  static Future<int> countFiles() async {
+    final db = await database;
+    final result = await db.rawQuery('SELECT COUNT(*) AS cnt FROM files');
+    return (result.first['cnt'] as int?) ?? 0;
   }
 
   /// Insert a file (skip if id exists)

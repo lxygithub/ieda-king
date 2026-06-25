@@ -10,20 +10,88 @@ import '../services/api_service.dart';
 import '../utils/file_handler.dart';
 
 class TimelineProvider extends ChangeNotifier {
+  static const int _pageSize = 20;
+
   List<SharedFile> _files = [];
   bool _initialized = false;
   bool _loading = false;
+  bool _loadingMore = false;
+  int _page = 0;
+  int _totalCount = 0;
   String _searchQuery = '';
   Set<SharedFileType> _typeFilter = {};
+  DateTime? _startDate;
+  DateTime? _endDate;
 
-  List<SharedFile> get files => List.unmodifiable(_files);
+  List<SharedFile> get files => _files;
   bool get initialized => _initialized;
   bool get loading => _loading;
+  bool get loadingMore => _loadingMore;
+  bool get hasMore => _files.length < _totalCount;
   String get searchQuery => _searchQuery;
   Set<SharedFileType> get typeFilter => _typeFilter;
+  DateTime? get startDate => _startDate;
+  DateTime? get endDate => _endDate;
+  bool get hasDateFilter => _startDate != null || _endDate != null;
 
   bool get isSearching => _searchQuery.isNotEmpty;
   bool get hasTypeFilter => _typeFilter.isNotEmpty;
+
+  /// Set date range filter and reload.
+  Future<void> setDateRange(DateTime? start, DateTime? end) async {
+    _startDate = start;
+    _endDate = end;
+    _files = [];
+    _page = 0;
+    _totalCount = 0;
+    notifyListeners();
+    await _fetchPage(0);
+  }
+
+  /// Clear date filter and reload.
+  Future<void> clearDateFilter() async {
+    _startDate = null;
+    _endDate = null;
+    _files = [];
+    _page = 0;
+    _totalCount = 0;
+    notifyListeners();
+    await _fetchPage(0);
+  }
+
+  Future<void> _fetchPage(int page) async {
+    if (page == 0) {
+      _loading = true;
+      notifyListeners();
+    } else {
+      _loadingMore = true;
+      notifyListeners();
+    }
+    try {
+      final result = await ApiService.instance.getFiles(
+        page: page,
+        size: _pageSize,
+        startDate: _startDate?.toIso8601String().substring(0, 10),
+        endDate: _endDate?.toIso8601String().substring(0, 10),
+      );
+      final items = (result['files'] as List<dynamic>?)?.cast<Map<String, dynamic>>() ?? [];
+      final total = result['total'] as int? ?? items.length;
+      final parsed = items.map((j) => SharedFile.fromJson(j)).toList();
+      if (page == 0) {
+        _files = parsed;
+      } else {
+        _files.addAll(parsed);
+      }
+      _totalCount = total;
+      _page = page;
+    } catch (e) {
+      debugPrint('[API] fetchPage error: $e');
+    } finally {
+      _loading = false;
+      _loadingMore = false;
+      notifyListeners();
+    }
+  }
 
   /// Combined filter: search + type
   List<SharedFile> get filteredFiles {
@@ -320,8 +388,10 @@ class TimelineProvider extends ChangeNotifier {
         }
         await prefs.remove('timeline_files');
       }
-      _files = await DatabaseService.loadFiles();
-      debugPrint('[API] loadFromDisk: ${_files.length} files loaded');
+      _totalCount = await DatabaseService.countFiles();
+      _files = await DatabaseService.loadFiles(limit: _pageSize, offset: 0);
+      _page = 0;
+      debugPrint('[API] loadFromDisk: ${_files.length}/$_totalCount files loaded');
       // Upload pending files via API
       for (final f in _files) {
         _uploadViaApi(f);
@@ -333,45 +403,55 @@ class TimelineProvider extends ChangeNotifier {
     }
   }
 
-  /// Fetch files from API, replace local SQLite with server data.
-  /// Call after login to ensure user isolation.
+  /// Fetch first page from API, replace local cache.
   Future<void> fetchFromApi() async {
     _loading = true;
     notifyListeners();
     try {
-      final apiFiles = await ApiService.instance.getFiles();
-      debugPrint('[API] fetchFromApi: ${apiFiles.length} files from server');
-      // Preserve local paths from existing data
+      // Preserve local paths from current files
       final localPaths = <String, String>{};
       for (final f in _files) {
-        if (f.localPath != null) {
-          localPaths[f.id] = f.localPath!;
+        if (f.localPath != null) localPaths[f.id] = f.localPath!;
+      }
+      // Reset and fetch page 0
+      _files = [];
+      _page = 0;
+      _totalCount = 0;
+      await _fetchPage(0);
+      // Restore local paths
+      for (int i = 0; i < _files.length; i++) {
+        if (_files[i].localPath == null && localPaths.containsKey(_files[i].id)) {
+          _files[i] = _files[i].copyWith(localPath: localPaths[_files[i].id]);
         }
       }
-      // Replace local SQLite with API data
+      // Update local cache
       await DatabaseService.clearAll();
-      final parsed = apiFiles.map((j) {
-        final f = SharedFile.fromJson(j);
-        // Restore local path if API returned null but we have it locally
-        if (f.localPath == null && localPaths.containsKey(f.id)) {
-          return f.copyWith(localPath: localPaths[f.id]);
-        }
-        return f;
-      }).toList();
-      for (final f in parsed) {
+      for (final f in _files) {
         await DatabaseService.insertFile(f);
       }
-      _files = parsed;
     } on TokenExpiredException {
-      // Token expired — logout handled by auth gate in main.dart
-      debugPrint('[API] token expired during fetch');
+      _loading = false;
+      notifyListeners();
+      return;
     } catch (e) {
       debugPrint('[API] fetchFromApi error: $e (using local cache)');
-      _files = await DatabaseService.loadFiles();
+      _totalCount = await DatabaseService.countFiles();
+      _files = await DatabaseService.loadFiles(limit: _pageSize, offset: 0);
+      _page = 0;
     } finally {
       _loading = false;
       notifyListeners();
     }
+  }
+
+  /// Load more pages from API.
+  Future<void> loadMore() async {
+    if (_loadingMore || !hasMore) return;
+    _loadingMore = true;
+    notifyListeners();
+    await _fetchPage(_page + 1);
+    _loadingMore = false;
+    notifyListeners();
   }
 
   // ===== Delete =====

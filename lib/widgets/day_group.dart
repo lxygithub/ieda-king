@@ -41,6 +41,13 @@ class _DayGroupState extends State<DayGroup> {
     _expanded = _allMinuteKeys.toSet();
   }
 
+  @override
+  void didUpdateWidget(covariant DayGroup oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Add any new minute keys from pagination
+    _expanded.addAll(_allMinuteKeys);
+  }
+
   String get _displayDate {
     final date = DateTime.parse(widget.dateStr);
     final now = DateTime.now();

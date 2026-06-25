@@ -182,8 +182,11 @@ class ApiService {
 
   // ========== Files ==========
 
-  Future<List<Map<String, dynamic>>> getFiles() async {
-    final url = '$baseUrl/api/files';
+  /// Fetch files with pagination and optional date filter. Returns {files: [...], total: N}.
+  Future<Map<String, dynamic>> getFiles({int page = 0, int size = 20, String? startDate, String? endDate}) async {
+    var url = '$baseUrl/api/files?page=$page&size=$size';
+    if (startDate != null) url += '&start_date=$startDate';
+    if (endDate != null) url += '&end_date=$endDate';
     _logReq('GET', url, headers: _headers);
     final resp = await http
         .get(Uri.parse(url), headers: _headers)
@@ -191,8 +194,7 @@ class ApiService {
     _logResp(resp);
     _checkAuth(resp);
     if (resp.statusCode == 200) {
-      final body = jsonDecode(resp.body);
-      return (body['files'] as List<dynamic>?)?.cast<Map<String, dynamic>>() ?? [];
+      return jsonDecode(resp.body) as Map<String, dynamic>;
     }
     throw ApiException(resp.statusCode, _detail(resp));
   }
