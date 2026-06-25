@@ -47,13 +47,6 @@ class _LoginScreenState extends State<LoginScreen> {
     await prefs.setString('last_username', name);
   }
 
-  @override
-  void dispose() {
-    _usernameCtrl.dispose();
-    _passwordCtrl.dispose();
-    super.dispose();
-  }
-
   Future<void> _login() async {
     final name = _usernameCtrl.text.trim();
     final pass = _passwordCtrl.text;

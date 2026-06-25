@@ -1,16 +1,21 @@
 import 'dart:io';
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:open_filex/open_filex.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:photo_view/photo_view.dart';
 import 'package:provider/provider.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'package:http/http.dart' as http;
 
 import '../l10n/app_localizations.dart';
 import '../models/shared_file.dart';
 import '../providers/timeline_provider.dart';
+import '../services/api_service.dart';
 import '../utils/file_handler.dart';
 
 class DetailScreen extends StatefulWidget {
@@ -104,6 +109,8 @@ class _DetailScreenState extends State<DetailScreen> {
     switch (f.type) {
       case SharedFileType.image:
         return _buildImagePreview(f);
+      case SharedFileType.video:
+        return _buildVideoCover(f);
       case SharedFileType.text:
       case SharedFileType.document:
         return _buildTextPreview(theme);
@@ -113,26 +120,79 @@ class _DetailScreenState extends State<DetailScreen> {
   }
 
   Widget _buildImagePreview(SharedFile f) {
-    if (f.localPath == null) return _noPreview();
-    final file = File(f.localPath!);
-    if (!file.existsSync()) return _noPreview();
+    // Local file
+    if (f.localPath != null) {
+      final file = File(f.localPath!);
+      if (file.existsSync()) {
+        return SizedBox(
+          height: 360,
+          child: GestureDetector(
+            onTap: () => _showOpenSheet(f),
+            child: PhotoView(
+              imageProvider: FileImage(file),
+              minScale: PhotoViewComputedScale.contained,
+              maxScale: PhotoViewComputedScale.covered * 3,
+              backgroundDecoration: BoxDecoration(
+                color: Theme.of(context).scaffoldBackgroundColor,
+              ),
+              loadingBuilder: (_, __) => const Center(
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+              errorBuilder: (_, __, ___) => _noPreview(),
+            ),
+          ),
+        );
+      }
+    }
+    // S3 image (no local file)
+    if (f.s3Key != null) {
+      return _S3DetailImage(file: f);
+    }
+    return _noPreview();
+  }
 
-    return SizedBox(
-      height: 360,
-      child: GestureDetector(
-        onTap: () => _showOpenSheet(f),
-        child: PhotoView(
-          imageProvider: FileImage(file),
-          minScale: PhotoViewComputedScale.contained,
-          maxScale: PhotoViewComputedScale.covered * 3,
-          backgroundDecoration: BoxDecoration(
-            color: Theme.of(context).scaffoldBackgroundColor,
+  Widget _buildVideoCover(SharedFile f) {
+    Widget cover;
+    if (f.thumbS3Key != null) {
+      final token = ApiService.instance.token;
+      final url = '${ApiService.instance.baseUrl}${f.thumbUrl}?token=${token ?? ''}';
+      cover = CachedNetworkImage(imageUrl: url, fit: BoxFit.cover,
+          placeholder: (_, __) => const SizedBox.shrink(),
+          errorWidget: (_, __, ___) => const SizedBox.shrink());
+    } else {
+      cover = const SizedBox.shrink();
+    }
+    return Container(
+      height: 300,
+      width: double.infinity,
+      color: Colors.black87,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          cover,
+          Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.play_circle_outline, size: 72, color: Colors.white54),
+                const SizedBox(height: 16),
+                Text(f.name, style: const TextStyle(color: Colors.white70, fontSize: 14)),
+                if (f.fileSize > 0)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text(FileHandler.formatSize(f.fileSize),
+                        style: const TextStyle(color: Colors.white38, fontSize: 12)),
+                  ),
+                const SizedBox(height: 24),
+                FilledButton.icon(
+                  icon: const Icon(Icons.open_in_new, size: 18),
+                  label: const Text('用系统播放器打开'),
+                  onPressed: () => _openExternal(f),
+                ),
+              ],
+            ),
           ),
-          loadingBuilder: (_, __) => const Center(
-            child: CircularProgressIndicator(strokeWidth: 2),
-          ),
-          errorBuilder: (_, __, ___) => _noPreview(),
-        ),
+        ],
       ),
     );
   }
@@ -374,10 +434,20 @@ class _DetailScreenState extends State<DetailScreen> {
   }
 
   Future<void> _openExternal(SharedFile f) async {
-    if (f.localPath == null) { _showSnack('文件路径为空'); return; }
-    final result = await OpenFilex.open(f.localPath!);
-    if (result.type != ResultType.done && mounted) {
-      _showSnack('打开失败: ${result.message}');
+    if (f.localPath != null) {
+      final result = await OpenFilex.open(f.localPath!);
+      if (result.type != ResultType.done && mounted) {
+        _showSnack('打开失败: ${result.message}');
+      }
+    } else if (f.s3Key != null) {
+      final uri = Uri.parse('${ApiService.instance.baseUrl}${f.downloadUrl}?token=${ApiService.instance.token ?? ''}');
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+      } else {
+        _showSnack('无法打开: $uri');
+      }
+    } else {
+      _showSnack('无文件可打开');
     }
   }
 
@@ -499,5 +569,199 @@ class _DetailScreenState extends State<DetailScreen> {
     if (bytes < 1024) return '$bytes B';
     if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
     return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+  }
+}
+
+/// Loads S3 thumbnail via CachedNetworkImage, with action buttons.
+class _S3DetailImage extends StatelessWidget {
+  final SharedFile file;
+  const _S3DetailImage({required this.file});
+
+  @override
+  Widget build(BuildContext context) {
+    final token = ApiService.instance.token;
+    if (token == null || token.isEmpty) return _noPreview();
+    final thumbUrl = '${ApiService.instance.baseUrl}${file.thumbUrl}?token=$token';
+
+    return Column(
+      children: [
+        SizedBox(
+          width: double.infinity,
+          height: 360,
+          child: Center(
+            child: GestureDetector(
+              child: CachedNetworkImage(
+                imageUrl: thumbUrl,
+                fit: BoxFit.contain,
+                placeholder: (_, __) => const Center(
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+                errorWidget: (_, __, ___) => _noPreview(),
+              ),
+              onTap: ()=>{
+                _openOriginal(context, file)
+              },
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            _actionBtn(context, Icons.open_in_new, '查看原图', () => _openOriginal(context, file)),
+            const SizedBox(width: 16),
+            _actionBtn(context, Icons.download, '保存到手机', () => _saveToGallery(context, file)),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _actionBtn(BuildContext context, IconData icon, String label, VoidCallback onTap) {
+    return OutlinedButton.icon(
+      icon: Icon(icon, size: 18),
+      label: Text(label, style: const TextStyle(fontSize: 13)),
+      onPressed: onTap,
+      style: OutlinedButton.styleFrom(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      ),
+    );
+  }
+
+  Future<void> _openOriginal(BuildContext context, SharedFile f) async {
+    final token = ApiService.instance.token ?? '';
+    final url = '${ApiService.instance.baseUrl}${f.downloadUrl}?token=$token';
+    if (f.localPath != null && File(f.localPath!).existsSync()) {
+      await Navigator.push(context, MaterialPageRoute(
+        builder: (_) => _FullScreenImage(file: f, localPath: f.localPath!),
+      ));
+    } else if (f.s3Key != null) {
+      await Navigator.push(context, MaterialPageRoute(
+        builder: (_) => _FullScreenImage(file: f, imageUrl: url),
+      ));
+    }
+  }
+
+  Future<void> _saveToGallery(BuildContext context, SharedFile f) async {
+    _showSnack(context, '正在下载...');
+    try {
+      final token = ApiService.instance.token ?? '';
+      final url = '${ApiService.instance.baseUrl}${f.downloadUrl}?token=$token';
+      final resp = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 30));
+      if (resp.statusCode != 200) { _showSnack(context, '下载失败'); return; }
+
+      final dir = await getTemporaryDirectory();
+      final tmpFile = File('${dir.path}/${f.name}');
+      await tmpFile.writeAsBytes(resp.bodyBytes);
+
+      final result = await OpenFilex.open(tmpFile.path);
+      if (result.type != ResultType.done && context.mounted) {
+        _showSnack(context, '保存失败: ${result.message}');
+      } else if (context.mounted) {
+        _showSnack(context, '已保存到临时目录');
+      }
+    } catch (e) {
+      _showSnack(context, '保存失败: $e');
+    }
+  }
+
+  void _showSnack(BuildContext context, String msg) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  }
+
+  Widget _noPreview() {
+    return Container(
+      height: 200,
+      alignment: Alignment.center,
+      child: Icon(Icons.broken_image_outlined, size: 48, color: Colors.grey[400]),
+    );
+  }
+}
+
+/// Full-screen image viewer with zoom and save button.
+class _FullScreenImage extends StatelessWidget {
+  final SharedFile file;
+  final String? localPath;
+  final String? imageUrl;
+
+  const _FullScreenImage({
+    required this.file,
+    this.localPath,
+    this.imageUrl,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final ImageProvider provider;
+    if (localPath != null) {
+      provider = FileImage(File(localPath!));
+    } else if (imageUrl != null) {
+      provider = CachedNetworkImageProvider(imageUrl!);
+    } else {
+      provider = const AssetImage('');
+    }
+
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.black87,
+        iconTheme: const IconThemeData(color: Colors.white),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.download),
+            tooltip: '保存到手机',
+            onPressed: () => _save(context),
+          ),
+        ],
+      ),
+      body: Center(
+        child: PhotoView(
+          imageProvider: provider,
+          minScale: PhotoViewComputedScale.contained,
+          maxScale: PhotoViewComputedScale.covered * 4,
+          backgroundDecoration: const BoxDecoration(color: Colors.black),
+          loadingBuilder: (_, __) => const Center(
+            child: CircularProgressIndicator(color: Colors.white),
+          ),
+          errorBuilder: (_, __, ___) => const Center(
+            child: Icon(Icons.broken_image_outlined, size: 64, color: Colors.white38),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _save(BuildContext context) async {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('正在下载...')),
+    );
+    try {
+      final token = ApiService.instance.token ?? '';
+      final url = '${ApiService.instance.baseUrl}${file.downloadUrl}?token=$token';
+      final resp = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 30));
+      if (resp.statusCode != 200) {
+        if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('下载失败')),
+        );
+        return;
+      }
+
+      final dir = await getTemporaryDirectory();
+      final tmpFile = File('${dir.path}/${file.name}');
+      await tmpFile.writeAsBytes(resp.bodyBytes);
+
+      final result = await OpenFilex.open(tmpFile.path);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(
+            result.type == ResultType.done ? '已保存到临时目录' : '保存失败: ${result.message}',
+          )),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('保存失败: $e')),
+      );
+    }
   }
 }

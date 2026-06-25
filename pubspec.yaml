@@ -1,4 +1,4 @@
-name: share_timeline
+name: idea_king
 description: Receive shared files and display in day-grouped timeline.
 publish_to: 'none'
 version: 1.0.0+1
@@ -30,6 +30,8 @@ dependencies:
   sqflite: ^2.4.3
   path: ^1.9.1
   minio: ^3.5.8
+  url_launcher: ^6.3.0
+  cached_network_image: ^3.4.0
 dev_dependencies:
   flutter_test:
     sdk: flutter

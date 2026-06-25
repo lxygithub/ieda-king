@@ -1,6 +1,14 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+
+/// Debug builds show full auth tokens; release builds truncate.
+bool _isDebug = !kReleaseMode;
+
+/// Truncate a string for logging (hide full token, long bodies).
+String _truncate(String s, {int max = 500}) =>
+    s.length <= max ? s : '${s.substring(0, max)}... (${s.length} total)';
 
 /// Thrown when the API returns HTTP 401 (token expired/invalid).
 class TokenExpiredException implements Exception {
@@ -30,6 +38,10 @@ class ApiService {
   /// JWT bearer token. Set from [AuthProvider] after login/init.
   String? token;
 
+  /// Called when token is expired/invalid (HTTP 401).
+  /// AuthProvider registers here to force logout.
+  void Function()? onTokenExpired;
+
   bool get isConfigured => baseUrl.isNotEmpty;
 
   Map<String, String> get _headers {
@@ -42,61 +54,87 @@ class ApiService {
     return h;
   }
 
+  // ========== Logging ==========
+
+  void _logReq(String method, String url, {Map<String, String>? headers, Object? body}) {
+    if (!_isDebug) return;
+    debugPrint('[API] >>> $method $url');
+    if (headers != null && headers.isNotEmpty) {
+      final h = Map<String, String>.from(headers);
+      if (h.containsKey('Authorization')) {
+        if (_isDebug) {
+          debugPrint('[API] >>> Authorization: Bearer $token');
+          h.remove('Authorization');
+        } else {
+          h['Authorization'] = 'Bearer ${token?.substring(0, 12)}...';
+        }
+      }
+      if (h.isNotEmpty) debugPrint('[API] >>> headers: $h');
+    }
+    if (body != null) {
+      final s = body is String ? body : jsonEncode(body);
+      debugPrint('[API] >>> body: ${_truncate(s)}');
+    }
+  }
+
+  void _logResp(http.Response resp) {
+    if (!_isDebug) return;
+    debugPrint('[API] <<< ${resp.statusCode} ${resp.request?.url}');
+    debugPrint('[API] <<< body: ${_truncate(resp.body)}');
+  }
+
   // ========== Auth ==========
 
   Future<Map<String, dynamic>> register(
       String username, String password) async {
+    final url = '$baseUrl/api/auth/register';
+    final body = {'username': username, 'password': password};
+    _logReq('POST', url, body: body);
     final resp = await http
-        .post(
-          Uri.parse('$baseUrl/api/auth/register'),
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({'username': username, 'password': password}),
-        )
+        .post(Uri.parse(url), headers: {'Content-Type': 'application/json'}, body: jsonEncode(body))
         .timeout(const Duration(seconds: 15));
+    _logResp(resp);
     if (resp.statusCode == 201) return jsonDecode(resp.body) as Map<String, dynamic>;
-    final detail = _detail(resp);
-    throw ApiException(resp.statusCode, detail);
+    throw ApiException(resp.statusCode, _detail(resp));
   }
 
   Future<Map<String, dynamic>> login(
       String username, String password) async {
+    final url = '$baseUrl/api/auth/login';
+    final body = {'username': username, 'password': password};
+    _logReq('POST', url, body: body);
     final resp = await http
-        .post(
-          Uri.parse('$baseUrl/api/auth/login'),
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({'username': username, 'password': password}),
-        )
+        .post(Uri.parse(url), headers: {'Content-Type': 'application/json'}, body: jsonEncode(body))
         .timeout(const Duration(seconds: 15));
+    _logResp(resp);
     if (resp.statusCode == 200) return jsonDecode(resp.body) as Map<String, dynamic>;
-    final detail = _detail(resp);
-    throw ApiException(resp.statusCode, detail);
+    throw ApiException(resp.statusCode, _detail(resp));
   }
 
   // ========== Account management ==========
 
   Future<Map<String, dynamic>> changePassword(
       String oldPassword, String newPassword) async {
+    final url = '$baseUrl/api/auth/change-password';
+    final body = {'old_password': oldPassword, 'new_password': newPassword};
+    _logReq('POST', url, headers: _headers, body: body);
     final resp = await http
-        .post(
-          Uri.parse('$baseUrl/api/auth/change-password'),
-          headers: _headers,
-          body: jsonEncode(
-              {'old_password': oldPassword, 'new_password': newPassword}),
-        )
+        .post(Uri.parse(url), headers: _headers, body: jsonEncode(body))
         .timeout(const Duration(seconds: 15));
+    _logResp(resp);
     _checkAuth(resp);
     if (resp.statusCode == 200) return jsonDecode(resp.body) as Map<String, dynamic>;
     throw ApiException(resp.statusCode, _detail(resp));
   }
 
   Future<Map<String, dynamic>> changeUsername(String newUsername) async {
+    final url = '$baseUrl/api/auth/change-username';
+    final body = {'new_username': newUsername};
+    _logReq('POST', url, headers: _headers, body: body);
     final resp = await http
-        .post(
-          Uri.parse('$baseUrl/api/auth/change-username'),
-          headers: _headers,
-          body: jsonEncode({'new_username': newUsername}),
-        )
+        .post(Uri.parse(url), headers: _headers, body: jsonEncode(body))
         .timeout(const Duration(seconds: 15));
+    _logResp(resp);
     _checkAuth(resp);
     if (resp.statusCode == 200) return jsonDecode(resp.body) as Map<String, dynamic>;
     throw ApiException(resp.statusCode, _detail(resp));
@@ -112,11 +150,14 @@ class ApiService {
     required String type,
     String? mimeType,
   }) async {
-    final request = http.MultipartRequest(
-      'POST',
-      Uri.parse('$baseUrl/api/files/upload'),
-    );
-    // Auth header
+    final url = '$baseUrl/api/files/upload';
+    if (_isDebug) {
+      debugPrint('[API] >>> POST $url (multipart)');
+      debugPrint('[API] >>> fields: file_id=$fileId name=$name type=$type');
+      debugPrint('[API] >>> file: $filePath');
+    }
+
+    final request = http.MultipartRequest('POST', Uri.parse(url));
     if (token != null) {
       request.headers['Authorization'] = 'Bearer $token';
     }
@@ -128,52 +169,62 @@ class ApiService {
 
     final streamedResp = await request.send().timeout(const Duration(minutes: 5));
     final resp = await http.Response.fromStream(streamedResp);
+    if (_isDebug) {
+      debugPrint('[API] <<< ${resp.statusCode} $url');
+      debugPrint('[API] <<< body: ${_truncate(resp.body)}');
+    }
     _checkAuth(resp);
     if (resp.statusCode == 200) {
       return jsonDecode(resp.body) as Map<String, dynamic>;
     }
-    // 502 = S3 upload failed on server
     throw ApiException(resp.statusCode, _detail(resp));
   }
 
   // ========== Files ==========
 
   Future<List<Map<String, dynamic>>> getFiles() async {
+    final url = '$baseUrl/api/files';
+    _logReq('GET', url, headers: _headers);
     final resp = await http
-        .get(Uri.parse('$baseUrl/api/files'), headers: _headers)
+        .get(Uri.parse(url), headers: _headers)
         .timeout(const Duration(seconds: 30));
+    _logResp(resp);
     _checkAuth(resp);
     if (resp.statusCode == 200) {
       final body = jsonDecode(resp.body);
-      return (body['files'] as List<dynamic>?)
-              ?.cast<Map<String, dynamic>>() ??
-          [];
+      return (body['files'] as List<dynamic>?)?.cast<Map<String, dynamic>>() ?? [];
     }
     throw ApiException(resp.statusCode, _detail(resp));
   }
 
-  Future<Map<String, dynamic>> syncFile(
-      Map<String, dynamic> fileData) async {
-    final resp = await http
-        .post(
-          Uri.parse('$baseUrl/api/files/sync'),
-          headers: _headers,
-          body: jsonEncode(fileData),
-        )
-        .timeout(const Duration(seconds: 30));
-    _checkAuth(resp);
-    if (resp.statusCode == 200) return jsonDecode(resp.body) as Map<String, dynamic>;
-    throw ApiException(resp.statusCode, _detail(resp));
+  /// Sync file metadata to server.
+  Future<Map<String, dynamic>?> syncFile(Map<String, dynamic> fileData) async {
+    final url = '$baseUrl/api/files/sync';
+    _logReq('POST', url, headers: _headers, body: fileData);
+    try {
+      final resp = await http
+          .post(Uri.parse(url), headers: _headers, body: jsonEncode(fileData))
+          .timeout(const Duration(seconds: 30));
+      _logResp(resp);
+      _checkAuth(resp);
+      if (resp.statusCode == 200) {
+        return jsonDecode(resp.body) as Map<String, dynamic>;
+      }
+      if (_isDebug) debugPrint('[API] syncFile error: ${resp.statusCode} ${_detail(resp)}');
+    } catch (e) {
+      if (_isDebug) debugPrint('[API] syncFile exception: $e');
+    }
+    return null;
   }
 
   Future<void> deleteFile(String id) async {
+    final url = '$baseUrl/api/files/delete';
+    final body = {'id': id};
+    _logReq('POST', url, headers: _headers, body: body);
     final resp = await http
-        .post(
-          Uri.parse('$baseUrl/api/files/delete'),
-          headers: _headers,
-          body: jsonEncode({'id': id}),
-        )
+        .post(Uri.parse(url), headers: _headers, body: jsonEncode(body))
         .timeout(const Duration(seconds: 10));
+    _logResp(resp);
     _checkAuth(resp);
     if (resp.statusCode != 200) {
       throw ApiException(resp.statusCode, _detail(resp));
@@ -181,12 +232,12 @@ class ApiService {
   }
 
   Future<void> clearAll() async {
+    final url = '$baseUrl/api/files/clear';
+    _logReq('POST', url, headers: _headers);
     final resp = await http
-        .post(
-          Uri.parse('$baseUrl/api/files/clear'),
-          headers: _headers,
-        )
+        .post(Uri.parse(url), headers: _headers)
         .timeout(const Duration(seconds: 10));
+    _logResp(resp);
     _checkAuth(resp);
     if (resp.statusCode != 200) {
       throw ApiException(resp.statusCode, _detail(resp));
@@ -199,6 +250,7 @@ class ApiService {
   void _checkAuth(http.Response resp) {
     if (resp.statusCode == 401) {
       token = null;
+      onTokenExpired?.call();
       throw TokenExpiredException();
     }
   }

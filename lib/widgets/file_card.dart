@@ -1,10 +1,12 @@
 import 'dart:io';
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import 'package:share_timeline/utils/file_handler.dart';
 
 import '../models/shared_file.dart';
+import '../services/api_service.dart';
+import '../utils/file_handler.dart';
 import 'highlighted_text.dart';
 
 class FileCard extends StatelessWidget {
@@ -156,21 +158,86 @@ class FileCard extends StatelessWidget {
   }
 
   Widget _buildThumbnail(ThemeData theme) {
-    if (file.type == SharedFileType.image && file.localPath != null) {
+    // Local file (fast, no network)
+    if (file.localPath != null) {
+      final localFile = File(file.localPath!);
+      if (localFile.existsSync()) {
+        if (file.type == SharedFileType.image) {
+          return ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: SizedBox(
+              width: 48, height: 48,
+              child: Image.file(
+                localFile,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => _buildS3Thumb(theme),
+              ),
+            ),
+          );
+        }
+        // Non-image local files (e.g. video) fall through to S3 thumb
+      }
+    }
+    // S3 thumbnail (image no localPath, or video)
+    return _buildS3Thumb(theme);
+  }
+
+  Widget _buildS3Thumb(ThemeData theme) {
+    if (file.thumbS3Key == null) {
+      if (file.type == SharedFileType.video) {
+        return ClipRRect(
+          borderRadius: BorderRadius.circular(8),
+          child: SizedBox(
+            width: 48, height: 48,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                _fallbackIcon(theme),
+                Center(child: Container(
+                  width: 28, height: 28,
+                  decoration: const BoxDecoration(color: Colors.black45, shape: BoxShape.circle),
+                  child: const Icon(Icons.play_arrow, color: Colors.white, size: 18),
+                )),
+              ],
+            ),
+          ),
+        );
+      }
+      return _fallbackIcon(theme);
+    }
+    final url = '${ApiService.instance.baseUrl}${file.thumbUrl}?token=${ApiService.instance.token ?? ''}';
+    final thumb = CachedNetworkImage(
+      imageUrl: url,
+      fit: BoxFit.cover,
+      placeholder: (_, __) => _fallbackIcon(theme),
+      errorWidget: (_, __, ___) => _fallbackIcon(theme),
+    );
+    if (file.type == SharedFileType.video) {
       return ClipRRect(
         borderRadius: BorderRadius.circular(8),
         child: SizedBox(
-          width: 48,
-          height: 48,
-          child: Image.file(
-            File(file.localPath!),
-            fit: BoxFit.cover,
-            errorBuilder: (_, __, ___) => _fallbackIcon(theme),
+          width: 48, height: 48,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              thumb,
+              Center(child: Container(
+                width: 28, height: 28,
+                decoration: const BoxDecoration(color: Colors.black45, shape: BoxShape.circle),
+                child: const Icon(Icons.play_arrow, color: Colors.white, size: 18),
+              )),
+            ],
           ),
         ),
       );
     }
-    return _fallbackIcon(theme);
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(8),
+      child: SizedBox(
+        width: 48, height: 48,
+        child: thumb,
+      ),
+    );
   }
 
   Widget _fallbackIcon(ThemeData theme) {
@@ -259,5 +326,4 @@ class FileCard extends StatelessWidget {
       case SharedFileType.other: return theme.colorScheme.onSurfaceVariant;
     }
   }
-
 }

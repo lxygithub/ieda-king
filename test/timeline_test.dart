@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:share_timeline/models/shared_file.dart';
+import 'package:idea_king/models/shared_file.dart';
 
 void main() {
   group('SharedFile', () {

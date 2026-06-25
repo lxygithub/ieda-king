@@ -63,6 +63,7 @@ class SharedFile {
   final String? uploadedParts; // JSON: [{"part":1,"etag":"..."}]
   final List<String> tags;
   final String? description;
+  final String? thumbS3Key;
 
   const SharedFile({
     required this.id,
@@ -81,9 +82,16 @@ class SharedFile {
     this.uploadedParts,
     this.tags = const [],
     this.description,
+    this.thumbS3Key,
   });
 
   String get displayDate => receivedAt.toIso8601String().substring(0, 10);
+
+  /// API download URL (relative). Prepend ApiService.instance.baseUrl.
+  /// API thumbnail URL (relative). For list/thumb display, faster than full download.
+  String get thumbUrl => '/api/files/$id/thumbnail';
+
+  String get downloadUrl => '/api/files/$id/download';
 
   /// All searchable text for this file
   String get searchableText {
@@ -99,9 +107,11 @@ class SharedFile {
   }
 
   SharedFile copyWith({
+    String? localPath,
     List<String>? tags,
     String? description,
     String? s3Key,
+    String? thumbS3Key,
     double? uploadProgress,
     String? uploadError,
     String? uploadId,
@@ -116,13 +126,14 @@ class SharedFile {
         id: id,
         name: name,
         type: type,
-        localPath: localPath,
+        localPath: localPath ?? this.localPath,
         textContent: textContent,
         sourceUri: sourceUri,
         receivedAt: receivedAt,
         mimeType: mimeType,
         fileSize: fileSize,
         s3Key: clearS3Key ? null : (s3Key ?? this.s3Key),
+        thumbS3Key: thumbS3Key ?? this.thumbS3Key,
         uploadProgress: clearUploadProgress ? null : (uploadProgress ?? this.uploadProgress),
         uploadError: clearUploadError ? null : (uploadError ?? this.uploadError),
         uploadId: clearUploadId ? null : (uploadId ?? this.uploadId),
@@ -142,10 +153,27 @@ class SharedFile {
         'mimeType': mimeType,
         'fileSize': fileSize,
         's3Key': s3Key,
+        'thumbS3Key': thumbS3Key,
         'uploadProgress': uploadProgress,
         'uploadError': uploadError,
         'uploadId': uploadId,
         'uploadedParts': uploadedParts,
+        'tags': tags,
+        'description': description,
+      };
+
+  /// Metadata-only JSON for server sync.
+  Map<String, dynamic> toSyncJson() => {
+        'id': id,
+        'name': name,
+        'type': type.name,
+        'localPath': localPath,
+        'textContent': textContent,
+        'sourceUri': sourceUri,
+        'receivedAt': receivedAt.toIso8601String(),
+        'mimeType': mimeType,
+        'fileSize': fileSize,
+        's3Key': s3Key,
         'tags': tags,
         'description': description,
       };
@@ -167,6 +195,7 @@ class SharedFile {
         uploadedParts: json['uploadedParts'] as String?,
         tags: (json['tags'] as List?)?.cast<String>() ?? [],
         description: json['description'] as String?,
+        thumbS3Key: json['thumbS3Key'] as String?,
       );
 
   @override

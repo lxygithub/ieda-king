@@ -162,6 +162,7 @@ class TimelineProvider extends ChangeNotifier {
       );
       _files.insert(0, file);
       await _persist();
+      ApiService.instance.syncFile(file.toSyncJson());
       _uploadViaApi(file);
     } finally {
       _loading = false;
@@ -182,6 +183,7 @@ class TimelineProvider extends ChangeNotifier {
       _files.removeWhere((f) => f.localPath == file.localPath && f.id != file.id);
       _files.insert(0, file);
       await _persist();
+      ApiService.instance.syncFile(file.toSyncJson());
       _uploadViaApi(file);
     } finally {
       _loading = false;
@@ -205,6 +207,7 @@ class TimelineProvider extends ChangeNotifier {
         );
         _files.removeWhere((x) => x.localPath == f.localPath && x.id != f.id);
         _files.insert(0, f);
+        ApiService.instance.syncFile(f.toSyncJson());
         _uploadViaApi(f);
       }
       await _persist();
@@ -243,6 +246,8 @@ class TimelineProvider extends ChangeNotifier {
         s3Key: result['s3Key'],
         clearUploadProgress: true,
       );
+      // Re-sync after upload to update server with s3Key
+      ApiService.instance.syncFile(_files[idx].toSyncJson());
       debugPrint('[API] upload done: ${file.id} -> ${result['s3Key']}');
     } catch (e) {
       debugPrint('[API] upload error: $e');
@@ -274,6 +279,13 @@ class TimelineProvider extends ChangeNotifier {
     }
   }
 
+  /// Sync all local files to server (manual sync button).
+  Future<void> syncAllToServer() async {
+    for (final f in _files) {
+      ApiService.instance.syncFile(f.toSyncJson());
+    }
+  }
+
   // ===== Persistence =====
 
   Future<void> _persist() async {
@@ -285,8 +297,6 @@ class TimelineProvider extends ChangeNotifier {
       } else {
         await DatabaseService.insertFile(f);
       }
-      // Sync metadata to backend (fire-and-forget)
-      ApiService.instance.syncFile(f.toJson());
     }
   }
 
@@ -312,10 +322,6 @@ class TimelineProvider extends ChangeNotifier {
       }
       _files = await DatabaseService.loadFiles();
       debugPrint('[API] loadFromDisk: ${_files.length} files loaded');
-      // Sync metadata to backend (fire-and-forget)
-      for (final f in _files) {
-        ApiService.instance.syncFile(f.toJson());
-      }
       // Upload pending files via API
       for (final f in _files) {
         _uploadViaApi(f);
@@ -335,11 +341,23 @@ class TimelineProvider extends ChangeNotifier {
     try {
       final apiFiles = await ApiService.instance.getFiles();
       debugPrint('[API] fetchFromApi: ${apiFiles.length} files from server');
+      // Preserve local paths from existing data
+      final localPaths = <String, String>{};
+      for (final f in _files) {
+        if (f.localPath != null) {
+          localPaths[f.id] = f.localPath!;
+        }
+      }
       // Replace local SQLite with API data
       await DatabaseService.clearAll();
-      final parsed = apiFiles
-          .map((j) => SharedFile.fromJson(j))
-          .toList();
+      final parsed = apiFiles.map((j) {
+        final f = SharedFile.fromJson(j);
+        // Restore local path if API returned null but we have it locally
+        if (f.localPath == null && localPaths.containsKey(f.id)) {
+          return f.copyWith(localPath: localPaths[f.id]);
+        }
+        return f;
+      }).toList();
       for (final f in parsed) {
         await DatabaseService.insertFile(f);
       }
@@ -377,7 +395,7 @@ class TimelineProvider extends ChangeNotifier {
     for (int i = 0; i < _files.length; i++) {
       _files[i] = _files[i].copyWith(clearS3Key: true, clearUploadProgress: true, clearUploadError: true);
       await DatabaseService.updateFile(_files[i]);
-      ApiService.instance.syncFile(_files[i].toJson());
+      ApiService.instance.syncFile(_files[i].toSyncJson());
     }
     notifyListeners();
     retryAllFailed();

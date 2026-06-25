@@ -59,12 +59,24 @@ class SettingsScreen extends StatelessWidget {
           Text('上传管理', style: theme.textTheme.titleSmall),
           const SizedBox(height: 8),
           Card(
-            child: ListTile(
-              leading: const Icon(Icons.cloud_upload_outlined),
-              title: const Text('重置上传状态'),
-              subtitle: const Text('清除所有文件的 s3Key, 触发重新上传'),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () => _confirmReset(context),
+            child: Column(
+              children: [
+                ListTile(
+                  leading: const Icon(Icons.cloud_upload_outlined),
+                  title: const Text('重置上传状态'),
+                  subtitle: const Text('清除所有文件的 s3Key, 触发重新上传'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => _confirmReset(context),
+                ),
+                const Divider(height: 1, indent: 16, endIndent: 16),
+                ListTile(
+                  leading: const Icon(Icons.sync),
+                  title: const Text('手动同步到服务器'),
+                  subtitle: const Text('将所有本地记录同步到服务端'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => _confirmSync(context),
+                ),
+              ],
             ),
           ),
           const SizedBox(height: 24),
@@ -193,9 +205,10 @@ class SettingsScreen extends StatelessWidget {
               )),
     );
     if (ok == true && context.mounted) {
-      await context.read<AuthProvider>().init(); // reload username from prefs
       ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('用户名已修改')));
+          const SnackBar(content: Text('用户名已修改，请重新登录')));
+      Navigator.of(context).popUntil((r) => r.isFirst);
+      await context.read<AuthProvider>().logout();
     }
   }
 
@@ -248,6 +261,33 @@ class SettingsScreen extends StatelessWidget {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('上传状态已重置, 正在重新上传...')),
+        );
+      }
+    }
+  }
+
+  Future<void> _confirmSync(BuildContext context) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('手动同步'),
+        content: const Text('将所有本地记录同步到服务端？'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('同步'),
+          ),
+        ],
+      ),
+    );
+    if (ok == true && context.mounted) {
+      await context.read<TimelineProvider>().syncAllToServer();
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('同步完成')),
         );
       }
     }

@@ -24,7 +24,6 @@ class _TimelineScreenState extends State<TimelineScreen> {
   bool _showSearch = false;
   final _searchCtrl = TextEditingController();
   final _searchFocus = FocusNode();
-  final Set<String> _collapsedGridMinutes = {};
   final Set<String> _selectedIds = {};
 
   @override
@@ -151,7 +150,11 @@ class _TimelineScreenState extends State<TimelineScreen> {
         ],
       ),
       body: RefreshIndicator(
-        onRefresh: () => context.read<TimelineProvider>().fetchFromApi(),
+        onRefresh: () async {
+          final p = context.read<TimelineProvider>();
+          await p.fetchFromApi();
+          p.retryAllFailed();
+        },
         child: Consumer<TimelineProvider>(
         builder: (_, provider, __) {
           return Stack(
@@ -168,14 +171,9 @@ class _TimelineScreenState extends State<TimelineScreen> {
                     _buildTypeFilter(theme, provider),
                     _buildFailedBanner(theme, provider),
                     Expanded(
-                      child: RefreshIndicator(
-                        onRefresh: () async {
-                          context.read<TimelineProvider>().retryAllFailed();
-                        },
-                        child: _isGridView
-                            ? _buildGridTimeline(provider, provider.searchQuery)
-                            : _buildListTimeline(provider, provider.searchQuery),
-                      ),
+                      child: _isGridView
+                          ? _buildGridTimeline(provider, provider.searchQuery)
+                          : _buildListTimeline(provider, provider.searchQuery),
                     ),
                   ],
                 ),
@@ -441,14 +439,6 @@ class _TimelineScreenState extends State<TimelineScreen> {
       label = l10n.formatDate(date);
     }
 
-    // Group by minute
-    final minuteMap = <String, List<SharedFile>>{};
-    for (final f in files) {
-      final key = f.receivedAt.toIso8601String().substring(0, 16);
-      minuteMap.putIfAbsent(key, () => []).add(f);
-    }
-    final minuteKeys = minuteMap.keys.toList()..sort((a, b) => b.compareTo(a));
-
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -480,129 +470,31 @@ class _TimelineScreenState extends State<TimelineScreen> {
             ],
           ),
         ),
-        // Minute groups
-        ...minuteKeys.map((minuteKey) {
-          final grpFiles = minuteMap[minuteKey]!;
-          final collapsed = _collapsedGridMinutes.contains(minuteKey);
-          final expanded = !collapsed;
-          return _buildGridMinuteGroup(minuteKey, grpFiles, expanded, query);
-        }),
-        const Divider(height: 1),
-      ],
-    );
-  }
-
-  Widget _buildGridMinuteGroup(String minuteKey, List<SharedFile> files,
-      bool expanded, String query) {
-    final theme = Theme.of(context);
-    final l10n = AppLocalizations.of(context);
-    final timeStr = DateFormat('HH:mm').format(files.first.receivedAt);
-
-    if (files.length == 1) {
-      return Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-        child: GridView.builder(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: 4,
-            mainAxisSpacing: 6,
-            crossAxisSpacing: 6,
-            childAspectRatio: 0.75,
-          ),
-          itemCount: 1,
-          itemBuilder: (_, i) => FileCardGrid(
-            file: files.first, onTap: () => _openDetail(files.first),
-            query: query,
-            isSelected: _selectedIds.contains(files.first.id),
-            onLongPress: () => _toggleSelection(files.first.id),
-          ),
-        ),
-      );
-    }
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        // Timestamp header row
+        // All files in one grid
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 8, 4),
-          child: Row(
-            children: [
-              Text(timeStr,
-                  style: theme.textTheme.bodySmall?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant,
-                      fontFeatures: const [FontFeature.tabularFigures()])),
-              const SizedBox(width: 6),
-              Text(l10n.items(files.length),
-                  style: theme.textTheme.labelSmall?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant)),
-              const Spacer(),
-              GestureDetector(
-                onTap: () => setState(() {
-                  if (expanded) {
-                    _collapsedGridMinutes.add(minuteKey);
-                  } else {
-                    _collapsedGridMinutes.remove(minuteKey);
-                  }
-                }),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                  decoration: BoxDecoration(
-                    color: expanded
-                        ? theme.colorScheme.surfaceContainerHighest
-                        : theme.colorScheme.primary,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        expanded ? Icons.unfold_less : Icons.unfold_more,
-                        size: 14,
-                        color: expanded
-                            ? theme.colorScheme.onSurfaceVariant
-                            : theme.colorScheme.onPrimary,
-                      ),
-                      const SizedBox(width: 3),
-                      Text(
-                        expanded ? l10n.collapse : l10n.expandAll,
-                        style: theme.textTheme.labelSmall?.copyWith(
-                          fontSize: 11,
-                          color: expanded
-                              ? theme.colorScheme.onSurfaceVariant
-                              : theme.colorScheme.onPrimary,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-        if (expanded)
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: SizedBox(
+            width: double.infinity,
             child: GridView.builder(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 4,
-                mainAxisSpacing: 6,
-                crossAxisSpacing: 6,
-                childAspectRatio: 0.75,
-              ),
-              itemCount: files.length,
-              itemBuilder: (_, i) => FileCardGrid(
-                file: files[i],
-                onTap: () => _openDetail(files[i]),
-                query: query,
-                isSelected: _selectedIds.contains(files[i].id),
-                onLongPress: () => _toggleSelection(files[i].id),
-              ),
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 4,
+              mainAxisSpacing: 6,
+              crossAxisSpacing: 6,
+              childAspectRatio: 0.75,
+            ),
+            itemCount: files.length,
+            itemBuilder: (_, i) => FileCardGrid(
+              file: files[i],
+              onTap: () => _openDetail(files[i]),
+              query: query,
+              isSelected: _selectedIds.contains(files[i].id),
+              onLongPress: () => _toggleSelection(files[i].id),
+            ),
             ),
           ),
+        ),
       ],
     );
   }

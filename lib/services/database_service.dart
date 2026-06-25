@@ -23,7 +23,7 @@ class DatabaseService {
 
   static Future<Database> _initDb() async {
     final dbPath = await getDatabasesPath();
-    final path = join(dbPath, 'share_timeline.db');
+    final path = join(dbPath, 'idea_king.db');
     return openDatabase(
       path,
       version: 1,

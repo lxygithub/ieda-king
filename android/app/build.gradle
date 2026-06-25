@@ -4,7 +4,7 @@ plugins {
 }
 
 android {
-    namespace = "com.example.share_timeline"
+    namespace = "top.ieop.idea_king"
     compileSdk = 36
     ndkVersion = flutter.ndkVersion
 
@@ -18,7 +18,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.example.share_timeline"
+        applicationId = "top.ieop.idea_king"
         minSdkVersion = flutter.minSdkVersion
         targetSdk = 36
         versionCode = flutter.versionCode

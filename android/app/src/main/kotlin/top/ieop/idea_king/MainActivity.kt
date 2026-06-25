@@ -1,4 +1,4 @@
-package com.example.share_timeline
+package top.ieop.idea_king
 
 import io.flutter.embedding.android.FlutterActivity
 
