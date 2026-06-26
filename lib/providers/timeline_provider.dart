@@ -2,10 +2,8 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/shared_file.dart';
-import '../services/database_service.dart';
 import '../services/api_service.dart';
 import '../utils/file_handler.dart';
 
@@ -299,7 +297,7 @@ class TimelineProvider extends ChangeNotifier {
     final localPath = file.localPath;
     if (localPath == null || !File(localPath).existsSync()) return;
 
-    _files[idx] = _files[idx].copyWith(uploadProgress: 0.5);
+    _files[idx] = _files[idx].copyWith(uploadProgress: 0.0);
     notifyListeners();
 
     try {
@@ -309,6 +307,10 @@ class TimelineProvider extends ChangeNotifier {
         name: file.name,
         type: file.type.label,
         mimeType: file.mimeType,
+        onProgress: (progress) {
+          _files[idx] = _files[idx].copyWith(uploadProgress: progress);
+          notifyListeners();
+        },
       );
       _files[idx] = _files[idx].copyWith(
         s3Key: result['s3Key'],
@@ -354,53 +356,14 @@ class TimelineProvider extends ChangeNotifier {
     }
   }
 
-  // ===== Persistence =====
-
-  Future<void> _persist() async {
-    final existing = await DatabaseService.loadFiles();
-    final existingIds = existing.map((e) => e.id).toSet();
-    for (final f in _files) {
-      if (existingIds.contains(f.id)) {
-        await DatabaseService.updateFile(f);
-      } else {
-        await DatabaseService.insertFile(f);
-      }
-    }
-  }
+  /// No-op: SQLite removed, all data from API.
+  Future<void> _persist() async {}
 
   Future<void> loadFromDisk() async {
     if (_initialized) return;
-    _loading = true;
-    notifyListeners();
-    try {
-      // Migrate from SharedPreferences to SQLite (one-time)
-      final prefs = await SharedPreferences.getInstance();
-      final oldJson = prefs.getString('timeline_files');
-      if (oldJson != null) {
-        final existing = await DatabaseService.loadFiles();
-        if (existing.isEmpty) {
-          final list = jsonDecode(oldJson) as List;
-          for (final e in list) {
-            final f = SharedFile.fromJson(e as Map<String, dynamic>);
-            await DatabaseService.insertFile(f);
-          }
-          debugPrint('[DB] migrated ${list.length} files from SharedPrefs to SQLite');
-        }
-        await prefs.remove('timeline_files');
-      }
-      _totalCount = await DatabaseService.countFiles();
-      _files = await DatabaseService.loadFiles(limit: _pageSize, offset: 0);
-      _page = 0;
-      debugPrint('[API] loadFromDisk: ${_files.length}/$_totalCount files loaded');
-      // Upload pending files via API
-      for (final f in _files) {
-        _uploadViaApi(f);
-      }
-    } finally {
-      _initialized = true;
-      _loading = false;
-      notifyListeners();
-    }
+    _initialized = true;
+    // Fetch from API on startup
+    await fetchFromApi();
   }
 
   /// Fetch first page from API, replace local cache.
@@ -413,7 +376,7 @@ class TimelineProvider extends ChangeNotifier {
       for (final f in _files) {
         if (f.localPath != null) localPaths[f.id] = f.localPath!;
       }
-      // Reset and fetch page 0
+      // Fetch page 0
       _files = [];
       _page = 0;
       _totalCount = 0;
@@ -424,20 +387,13 @@ class TimelineProvider extends ChangeNotifier {
           _files[i] = _files[i].copyWith(localPath: localPaths[_files[i].id]);
         }
       }
-      // Update local cache
-      await DatabaseService.clearAll();
-      for (final f in _files) {
-        await DatabaseService.insertFile(f);
-      }
     } on TokenExpiredException {
       _loading = false;
       notifyListeners();
       return;
     } catch (e) {
-      debugPrint('[API] fetchFromApi error: $e (using local cache)');
-      _totalCount = await DatabaseService.countFiles();
-      _files = await DatabaseService.loadFiles(limit: _pageSize, offset: 0);
-      _page = 0;
+      debugPrint('[API] fetchFromApi error: $e');
+      _files = [];
     } finally {
       _loading = false;
       notifyListeners();
@@ -458,14 +414,12 @@ class TimelineProvider extends ChangeNotifier {
 
   Future<void> deleteFile(SharedFile file) async {
     _files.removeWhere((f) => f.id == file.id);
-    await DatabaseService.deleteFile(file.id);
     ApiService.instance.deleteFile(file.id);
     notifyListeners();
   }
 
   Future<void> clearAll() async {
     _files.clear();
-    await DatabaseService.clearAll();
     ApiService.instance.clearAll();
     notifyListeners();
   }
@@ -474,7 +428,6 @@ class TimelineProvider extends ChangeNotifier {
   Future<void> resetUploadStatus() async {
     for (int i = 0; i < _files.length; i++) {
       _files[i] = _files[i].copyWith(clearS3Key: true, clearUploadProgress: true, clearUploadError: true);
-      await DatabaseService.updateFile(_files[i]);
       ApiService.instance.syncFile(_files[i].toSyncJson());
     }
     notifyListeners();

@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
@@ -37,6 +39,9 @@ class ApiService {
 
   /// JWT bearer token. Set from [AuthProvider] after login/init.
   String? token;
+
+  /// Tracks uploaded bytes for progress callbacks.
+  int _uploadedBytes = 0;
 
   /// Called when token is expired/invalid (HTTP 401).
   /// AuthProvider registers here to force logout.
@@ -143,12 +148,14 @@ class ApiService {
   // ========== Upload ==========
 
   /// Upload file binary to API. API uploads to S3, returns s3Key.
+  /// [onProgress] receives bytes sent / total bytes, called during upload.
   Future<Map<String, dynamic>> uploadFile(
     String filePath, {
     required String fileId,
     required String name,
     required String type,
     String? mimeType,
+    void Function(double)? onProgress,
   }) async {
     final url = '$baseUrl/api/files/upload';
     if (_isDebug) {
@@ -156,6 +163,21 @@ class ApiService {
       debugPrint('[API] >>> fields: file_id=$fileId name=$name type=$type');
       debugPrint('[API] >>> file: $filePath');
     }
+
+    _uploadedBytes = 0;
+    final file = File(filePath);
+    final fileLength = await file.length();
+    final stream = file.openRead();
+    final byteStream = http.ByteStream(stream.transform(
+      StreamTransformer.fromHandlers(handleData: (data, sink) {
+        if (onProgress != null) {
+          // Track progress via a simple counter
+          _uploadedBytes += data.length;
+          onProgress(_uploadedBytes / fileLength);
+        }
+        sink.add(data);
+      }),
+    ));
 
     final request = http.MultipartRequest('POST', Uri.parse(url));
     if (token != null) {
@@ -165,7 +187,7 @@ class ApiService {
     request.fields['name'] = name;
     request.fields['type'] = type;
     request.fields['mimeType'] = mimeType ?? 'application/octet-stream';
-    request.files.add(await http.MultipartFile.fromPath('file', filePath));
+    request.files.add(http.MultipartFile('file', byteStream, fileLength, filename: name));
 
     final streamedResp = await request.send().timeout(const Duration(minutes: 5));
     final resp = await http.Response.fromStream(streamedResp);
