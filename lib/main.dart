@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:mmkv/mmkv.dart';
 import 'package:provider/provider.dart';
 import 'package:receive_sharing_intent/receive_sharing_intent.dart';
@@ -17,6 +18,25 @@ const _apiBaseUrl = 'http://192.227.212.20:18900';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await MMKV.initialize();
+
+  // Init foreground task notification channel
+  FlutterForegroundTask.init(
+    androidNotificationOptions: AndroidNotificationOptions(
+      channelId: 'idea_king_upload',
+      channelName: 'File Upload',
+      channelDescription: 'Shows file upload progress',
+      channelImportance: NotificationChannelImportance.LOW,
+      priority: NotificationPriority.LOW,
+    ),
+    iosNotificationOptions: const IOSNotificationOptions(
+      showNotification: false,
+    ),
+    foregroundTaskOptions: ForegroundTaskOptions(
+      eventAction: ForegroundTaskEventAction.nothing(),
+      autoRunOnBoot: false,
+      allowWifiLock: true,
+    ),
+  );
 
   // Init API base
   ApiService.instance.baseUrl = _apiBaseUrl;

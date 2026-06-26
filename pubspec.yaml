@@ -28,6 +28,7 @@ dependencies:
   cached_network_image: ^3.4.0
   flutter_slidable: ^3.1.1
   mmkv: ^2.4.0
+  flutter_foreground_task: ^9.2.2
 dev_dependencies:
   flutter_test:
     sdk: flutter

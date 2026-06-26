@@ -1,10 +1,12 @@
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:mmkv/mmkv.dart';
 
 import '../models/shared_file.dart';
 import '../services/api_service.dart';
+import '../services/foreground_task_handler.dart';
 import '../utils/file_handler.dart';
 
 class TimelineProvider extends ChangeNotifier {
@@ -306,6 +308,69 @@ class TimelineProvider extends ChangeNotifier {
     }
   }
 
+  // ===== Foreground Service (background upload + notification) =====
+
+  int get _activeUploadCount => _uploadingIds.length;
+
+  /// Start foreground service on first upload, refresh notification.
+  void _ensureUploadService() {
+    if (_activeUploadCount == 1) {
+      FlutterForegroundTask.startService(
+        callback: uploadForegroundTaskCallback,
+        notificationTitle: 'Uploading...',
+        notificationText: 'Starting...',
+      );
+    }
+    _refreshUploadNotification();
+  }
+
+  /// Refresh notification progress from all active uploads.
+  void _refreshUploadNotification() {
+    if (_activeUploadCount == 0) return;
+
+    double totalProgress = 0;
+    int trackedCount = 0;
+    String? firstName;
+
+    for (final f in _files) {
+      if (_uploadingIds.containsKey(f.id)) {
+        if (f.uploadProgress != null) {
+          totalProgress += f.uploadProgress!;
+          trackedCount++;
+        }
+        firstName ??= f.name;
+      }
+    }
+
+    final avgProgress = trackedCount > 0 ? totalProgress / trackedCount : 0.0;
+    final pct = (avgProgress * 100).toInt();
+    final title = _activeUploadCount == 1
+        ? 'Uploading ${firstName ?? "file"}'
+        : 'Uploading $_activeUploadCount files';
+    final text = '$pct%';
+
+    FlutterForegroundTask.updateService(
+      notificationTitle: title,
+      notificationText: text,
+    );
+  }
+
+  /// Stop foreground service when queue is empty.
+  void _checkStopService() {
+    if (_activeUploadCount == 0) {
+      FlutterForegroundTask.updateService(
+        notificationTitle: 'Upload complete',
+        notificationText: 'All files uploaded',
+      );
+      // Brief delay so user sees "complete", then dismiss
+      Future.delayed(const Duration(seconds: 2), () {
+        if (_activeUploadCount == 0) {
+          FlutterForegroundTask.stopService();
+        }
+      });
+    }
+  }
+
   // ===== API Upload with chunked resume support =====
 
   static const int _chunkSize = 5 * 1024 * 1024; // 5MB
@@ -318,6 +383,8 @@ class TimelineProvider extends ChangeNotifier {
     if (file.s3Key != null) { _uploadingIds.remove(file.id); return; }
     final localPath = file.localPath;
     if (localPath == null || !File(localPath).existsSync()) { _uploadingIds.remove(file.id); return; }
+
+    _ensureUploadService();
 
     final fp = File(localPath);
     final fileSize = await fp.length();
@@ -334,6 +401,7 @@ class TimelineProvider extends ChangeNotifier {
           onProgress: (p) {
             _files[idx] = _files[idx].copyWith(uploadProgress: p);
             notifyListeners();
+            _refreshUploadNotification();
           },
         );
         final currentIdx = _files.indexWhere((f) => f.id == file.id);
@@ -343,6 +411,9 @@ class TimelineProvider extends ChangeNotifier {
         ApiService.instance.syncFile(file.toSyncJson());
         debugPrint('[API] upload done: ${file.id} -> ${result['s3Key']}');
         await _persist();
+        _uploadingIds.remove(file.id);
+        _refreshUploadNotification();
+        _checkStopService();
         notifyListeners();
         return;
       }
@@ -416,6 +487,7 @@ class TimelineProvider extends ChangeNotifier {
         }
         _files[idx] = _files[idx].copyWith(uploadProgress: (i + 1) / totalChunks);
         notifyListeners();
+        _refreshUploadNotification();
       }
 
       debugPrint('[chunk] completing upload...');
@@ -434,6 +506,8 @@ class TimelineProvider extends ChangeNotifier {
       }
     }
     _uploadingIds.remove(file.id);
+    _refreshUploadNotification();
+    _checkStopService();
     await _persist();
     notifyListeners();
   }
@@ -526,6 +600,8 @@ class TimelineProvider extends ChangeNotifier {
     _uploadingIds.remove(file.id);
     _files.removeWhere((f) => f.id == file.id);
     ApiService.instance.deleteFile(file.id);
+    _refreshUploadNotification();
+    _checkStopService();
     notifyListeners();
   }
 
