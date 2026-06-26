@@ -373,7 +373,7 @@ class TimelineProvider extends ChangeNotifier {
 
   // ===== API Upload with chunked resume support =====
 
-  static const int _chunkSize = 5 * 1024 * 1024; // 5MB
+  static const int _chunkSize = 50 * 1024 * 1024; // 50MB (reduced Garage compaction pressure)
 
   Future<void> _uploadViaApi(SharedFile file) async {
     if (_uploadingIds.containsKey(file.id)) return;
