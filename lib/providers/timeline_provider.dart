@@ -394,10 +394,13 @@ class TimelineProvider extends ChangeNotifier {
 
     _ensureUploadService();
 
+    // Show progress immediately — don't wait for file size read
+    _files[idx] = _files[idx].copyWith(uploadProgress: 0.0);
+    notifyListeners();
+
     final fp = File(localPath);
     final fileSize = await fp.length();
 
-    _files[idx] = _files[idx].copyWith(uploadProgress: 0.0);
     notifyListeners();
 
     try {
