@@ -99,6 +99,20 @@ class FileCard extends StatelessWidget {
                                   style: theme.textTheme.bodyMedium?.copyWith(
                                       fontWeight: FontWeight.w500),
                                 ),
+                                if (file.textContent != null && file.textContent!.isNotEmpty)
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 2, bottom: 2),
+                                    child: Text(
+                                      file.textContent!.length > 200
+                                          ? '${file.textContent!.substring(0, 200).replaceAll('\n', ' ')}...'
+                                          : file.textContent!.replaceAll('\n', ' '),
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: theme.textTheme.bodySmall?.copyWith(
+                                          color: theme.colorScheme.onSurfaceVariant,
+                                          fontSize: 11),
+                                    ),
+                                  ),
                                 const SizedBox(height: 4),
                                 Row(
                                   children: [

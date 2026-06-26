@@ -70,7 +70,7 @@ class TimelineProvider extends ChangeNotifier {
         size: _pageSize,
         startDate: _startDate?.toIso8601String().substring(0, 10),
         endDate: _endDate?.toIso8601String().substring(0, 10),
-        type: _typeFilter.isNotEmpty ? _typeFilter.first.name : null,
+        type: _typeFilter.isNotEmpty ? _typeFilter.map((t) => t.name).join(',') : null,
         search: _searchQuery.isNotEmpty ? _searchQuery : null,
       );
       final items = (result['files'] as List<dynamic>?)?.cast<Map<String, dynamic>>() ?? [];

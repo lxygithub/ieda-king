@@ -429,6 +429,14 @@ class _TimelineScreenState extends State<TimelineScreen> {
               style: theme.textTheme.bodySmall?.copyWith(
                   color: theme.colorScheme.onSurfaceVariant
                       .withValues(alpha: 0.7))),
+          const SizedBox(height: 24),
+          OutlinedButton.icon(
+            icon: const Icon(Icons.refresh, size: 18),
+            label: const Text('点击重试'),
+            onPressed: () {
+              context.read<TimelineProvider>().fetchFromApi();
+            },
+          ),
         ],
       ),
     );
