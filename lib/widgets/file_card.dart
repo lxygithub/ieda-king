@@ -131,7 +131,9 @@ class FileCard extends StatelessWidget {
                                     else if (file.uploadError != null)
                                       _uploadError(theme)
                                     else if (file.s3Key != null)
-                                      _uploadDone(theme),
+                                      _uploadDone(theme)
+                                    else if (file.localPath != null)
+                                      _uploadPending(theme),
                                   ],
                                 ),
                               ],
@@ -313,6 +315,19 @@ class FileCard extends StatelessWidget {
         child: Tooltip(
           message: file.uploadError ?? '上传失败',
           child: const Icon(Icons.cloud_off, size: 14, color: Colors.orange),
+        ),
+      ),
+    );
+  }
+
+  Widget _uploadPending(ThemeData theme) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 6),
+      child: GestureDetector(
+        onTap: onRetry,
+        child: Tooltip(
+          message: '等待上传',
+          child: const Icon(Icons.cloud_upload_outlined, size: 14, color: Colors.grey),
         ),
       ),
     );

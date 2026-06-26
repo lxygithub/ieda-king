@@ -112,7 +112,6 @@ class _DetailScreenState extends State<DetailScreen> {
       case SharedFileType.video:
         return _buildVideoCover(f);
       case SharedFileType.text:
-      case SharedFileType.document:
         return _buildTextPreview(theme);
       default:
         return const SizedBox.shrink();
@@ -434,7 +433,7 @@ class _DetailScreenState extends State<DetailScreen> {
   }
 
   Future<void> _openExternal(SharedFile f) async {
-    if (f.localPath != null) {
+    if (f.localPath != null && File(f.localPath!).existsSync()) {
       final result = await OpenFilex.open(f.localPath!);
       if (result.type != ResultType.done && mounted) {
         _showSnack('打开失败: ${result.message}');
@@ -452,8 +451,10 @@ class _DetailScreenState extends State<DetailScreen> {
   }
 
   Future<void> _shareFile(SharedFile f) async {
-    if (f.localPath != null) {
+    if (f.localPath != null && File(f.localPath!).existsSync()) {
       await Share.shareXFiles([XFile(f.localPath!)], text: f.name);
+    } else if (f.localPath != null) {
+      _showSnack('本地文件不存在');
     } else if (f.textContent != null) {
       await Share.share(f.textContent!, subject: f.name);
     } else {

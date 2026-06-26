@@ -402,10 +402,14 @@ class TimelineProvider extends ChangeNotifier {
       _page = 0;
       _totalCount = 0;
       await _fetchPage(0);
-      // Restore local paths
+      // Restore local paths and trigger upload for pending files
       for (int i = 0; i < _files.length; i++) {
         if (_files[i].localPath == null && localPaths.containsKey(_files[i].id)) {
           _files[i] = _files[i].copyWith(localPath: localPaths[_files[i].id]);
+        }
+        // Auto-upload files that have localPath but no s3Key
+        if (_files[i].s3Key == null && _files[i].localPath != null) {
+          _uploadViaApi(_files[i]);
         }
       }
     } on TokenExpiredException {
