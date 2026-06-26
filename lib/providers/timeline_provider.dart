@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -71,6 +70,8 @@ class TimelineProvider extends ChangeNotifier {
         size: _pageSize,
         startDate: _startDate?.toIso8601String().substring(0, 10),
         endDate: _endDate?.toIso8601String().substring(0, 10),
+        type: _typeFilter.isNotEmpty ? _typeFilter.first.name : null,
+        search: _searchQuery.isNotEmpty ? _searchQuery : null,
       );
       final items = (result['files'] as List<dynamic>?)?.cast<Map<String, dynamic>>() ?? [];
       final total = result['total'] as int? ?? items.length;
@@ -123,14 +124,22 @@ class TimelineProvider extends ChangeNotifier {
 
   // ===== Search =====
 
-  void setSearchQuery(String query) {
+  Future<void> setSearchQuery(String query) async {
     _searchQuery = query.trim().toLowerCase();
+    _files = [];
+    _page = 0;
+    _totalCount = 0;
     notifyListeners();
+    await _fetchPage(0);
   }
 
-  void clearSearch() {
+  Future<void> clearSearch() async {
     _searchQuery = '';
+    _files = [];
+    _page = 0;
+    _totalCount = 0;
     notifyListeners();
+    await _fetchPage(0);
   }
 
   /// Fuzzy search: query chars must appear in order in target
@@ -157,23 +166,35 @@ class TimelineProvider extends ChangeNotifier {
 
   // ===== Type filter =====
 
-  void toggleTypeFilter(SharedFileType type) {
+  Future<void> toggleTypeFilter(SharedFileType type) async {
     if (_typeFilter.contains(type)) {
       _typeFilter.remove(type);
     } else {
       _typeFilter.add(type);
     }
+    _files = [];
+    _page = 0;
+    _totalCount = 0;
     notifyListeners();
+    await _fetchPage(0);
   }
 
-  void setTypeFilter(Set<SharedFileType> types) {
+  Future<void> setTypeFilter(Set<SharedFileType> types) async {
     _typeFilter = Set.from(types);
+    _files = [];
+    _page = 0;
+    _totalCount = 0;
     notifyListeners();
+    await _fetchPage(0);
   }
 
-  void clearTypeFilter() {
+  Future<void> clearTypeFilter() async {
     _typeFilter = {};
+    _files = [];
+    _page = 0;
+    _totalCount = 0;
     notifyListeners();
+    await _fetchPage(0);
   }
 
   // ===== Update metadata =====

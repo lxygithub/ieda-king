@@ -22,7 +22,7 @@ class AuthProvider extends ChangeNotifier {
   String? get error => _error;
   String? _error;
 
-  /// Load persisted token from SharedPreferences and verify it.
+  /// Load persisted token from SharedPreferences. Verify in background.
   Future<void> init() async {
     _isLoading = true;
     notifyListeners();
@@ -42,25 +42,24 @@ class AuthProvider extends ChangeNotifier {
         ApiService.instance.token = null;
         notifyListeners();
       };
-      // Verify token is still valid by making a lightweight API call
-      if (_token != null) {
-        try {
-          await ApiService.instance.getFiles();
-        } on TokenExpiredException {
-          _token = null;
-          _userId = null;
-          _username = null;
-          _isAdmin = false;
-          ApiService.instance.token = null;
-          await _persist();
-        } catch (_) {
-          // Network error — keep cached token, user may be offline
-        }
-      }
     } finally {
       _isLoading = false;
       _initialized = true;
       notifyListeners();
+    }
+    // Verify token in background (non-blocking)
+    if (_token != null) {
+      try {
+        await ApiService.instance.getFiles();
+      } on TokenExpiredException {
+        _token = null;
+        _userId = null;
+        _username = null;
+        _isAdmin = false;
+        ApiService.instance.token = null;
+        await _persist();
+        notifyListeners();
+      } catch (_) {}
     }
   }
 

@@ -30,10 +30,8 @@ class _TimelineScreenState extends State<TimelineScreen> {
   void initState() {
     super.initState();
     _loadViewPref();
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      final p = context.read<TimelineProvider>();
-      await p.loadFromDisk();
-      if (mounted) await p.fetchFromApi();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      context.read<TimelineProvider>().loadFromDisk();
     });
   }
 

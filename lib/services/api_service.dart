@@ -204,11 +204,13 @@ class ApiService {
 
   // ========== Files ==========
 
-  /// Fetch files with pagination and optional date filter. Returns {files: [...], total: N}.
-  Future<Map<String, dynamic>> getFiles({int page = 0, int size = 20, String? startDate, String? endDate}) async {
+  /// Fetch files with pagination and filters. Returns {files: [...], total: N}.
+  Future<Map<String, dynamic>> getFiles({int page = 0, int size = 20, String? startDate, String? endDate, String? type, String? search}) async {
     var url = '$baseUrl/api/files?page=$page&size=$size';
     if (startDate != null) url += '&start_date=$startDate';
     if (endDate != null) url += '&end_date=$endDate';
+    if (type != null) url += '&type=$type';
+    if (search != null && search.isNotEmpty) url += '&search=$search';
     _logReq('GET', url, headers: _headers);
     final resp = await http
         .get(Uri.parse(url), headers: _headers)
