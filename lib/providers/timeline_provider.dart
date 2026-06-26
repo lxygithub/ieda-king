@@ -371,12 +371,6 @@ class TimelineProvider extends ChangeNotifier {
   }
 
   /// Sync all local files to server (manual sync button).
-  Future<void> syncAllToServer() async {
-    for (final f in _files) {
-      ApiService.instance.syncFile(f.toSyncJson());
-    }
-  }
-
   /// No-op: SQLite removed, all data from API.
   Future<void> _persist() async {}
 
@@ -450,14 +444,6 @@ class TimelineProvider extends ChangeNotifier {
   }
 
   /// Clear all s3Key values so files get re-uploaded
-  Future<void> resetUploadStatus() async {
-    for (int i = 0; i < _files.length; i++) {
-      _files[i] = _files[i].copyWith(clearS3Key: true, clearUploadProgress: true, clearUploadError: true);
-      ApiService.instance.syncFile(_files[i].toSyncJson());
-    }
-    notifyListeners();
-    retryAllFailed();
-  }
 }
 
 class TagCount {

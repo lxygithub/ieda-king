@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_slidable/flutter_slidable.dart';
 import 'package:intl/intl.dart';
+import 'package:provider/provider.dart';
 
 import '../l10n/app_localizations.dart';
 import '../models/shared_file.dart';
+import '../providers/timeline_provider.dart';
 import 'file_card.dart';
 
 class DayGroup extends StatefulWidget {
@@ -152,16 +155,18 @@ class _DayGroupState extends State<DayGroup> {
     final expanded = _expanded.contains(minuteKey);
 
     if (files.length == 1) {
-      return FileCard(
-        file: files.first, onTap: () => widget.onTap(files.first),
-        query: widget.query,
-        isSelected: widget.selectedIds.contains(files.first.id),
-        onLongPress: widget.onToggleSelection != null
-            ? () => widget.onToggleSelection!(files.first.id)
-            : null,
-        onRetry: widget.onRetry != null
-            ? () => widget.onRetry!(files.first.id)
-            : null,
+      return _buildSlidable(files.first,
+        FileCard(
+          file: files.first, onTap: () => widget.onTap(files.first),
+          query: widget.query,
+          isSelected: widget.selectedIds.contains(files.first.id),
+          onLongPress: widget.onToggleSelection != null
+              ? () => widget.onToggleSelection!(files.first.id)
+              : null,
+          onRetry: widget.onRetry != null
+              ? () => widget.onRetry!(files.first.id)
+              : null,
+        ),
       );
     }
 
@@ -252,7 +257,7 @@ class _DayGroupState extends State<DayGroup> {
         if (expanded)
           ...files.map((f) => Padding(
             padding: const EdgeInsets.only(left: 72),
-            child: FileCard(
+            child: _buildSlidable(f, FileCard(
               file: f, onTap: () => widget.onTap(f),
               query: widget.query, showTime: false,
               isSelected: widget.selectedIds.contains(f.id),
@@ -263,8 +268,46 @@ class _DayGroupState extends State<DayGroup> {
                   ? () => widget.onRetry!(f.id)
                   : null,
             ),
-          )),
+          )))
       ],
+    );
+  }
+
+  Widget _buildSlidable(SharedFile file, Widget child) {
+    return Slidable(
+      endActionPane: ActionPane(
+        motion: const BehindMotion(),
+        children: [
+          if (file.s3Key != null || file.uploadError != null)
+            SlidableAction(
+              onPressed: (_) {
+                if (file.uploadError != null) {
+                  widget.onRetry?.call(file.id);
+                } else {
+                  // Force re-upload: clear s3Key and retry
+                  context.read<TimelineProvider>().retryUpload(file.id);
+                }
+              },
+              backgroundColor: Colors.orange,
+              foregroundColor: Colors.white,
+              icon: Icons.cloud_upload_outlined,
+              label: '重传',
+            ),
+          SlidableAction(
+            onPressed: (_) {
+              final provider = context.read<TimelineProvider>();
+              for (final f in [file]) {
+                provider.deleteFile(f);
+              }
+            },
+            backgroundColor: Colors.red,
+            foregroundColor: Colors.white,
+            icon: Icons.delete_outline,
+            label: '删除',
+          ),
+        ],
+      ),
+      child: child,
     );
   }
 }

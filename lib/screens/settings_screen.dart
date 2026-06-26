@@ -59,24 +59,12 @@ class SettingsScreen extends StatelessWidget {
           Text('上传管理', style: theme.textTheme.titleSmall),
           const SizedBox(height: 8),
           Card(
-            child: Column(
-              children: [
-                ListTile(
-                  leading: const Icon(Icons.cloud_upload_outlined),
-                  title: const Text('重置上传状态'),
-                  subtitle: const Text('清除所有文件的 s3Key, 触发重新上传'),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () => _confirmReset(context),
-                ),
-                const Divider(height: 1, indent: 16, endIndent: 16),
-                ListTile(
-                  leading: const Icon(Icons.sync),
-                  title: const Text('手动同步到服务器'),
-                  subtitle: const Text('将所有本地记录同步到服务端'),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () => _confirmSync(context),
-                ),
-              ],
+            child: ListTile(
+              leading: const Icon(Icons.cloud_upload_outlined),
+              title: const Text('重传失败文件'),
+              subtitle: const Text('重新上传所有上传失败的文件'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => _confirmRetryAll(context),
             ),
           ),
           const SizedBox(height: 24),
@@ -237,13 +225,12 @@ class SettingsScreen extends StatelessWidget {
     }
   }
 
-  Future<void> _confirmReset(BuildContext context) async {
+  Future<void> _confirmRetryAll(BuildContext context) async {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('重置上传状态'),
-        content: const Text(
-            '将清除所有文件的上传标记, 触发重新上传到 S3。\n\n已有 s3Key 的文件不会被删除。'),
+        title: const Text('重传失败文件'),
+        content: const Text('重新尝试上传所有上传失败的文件？'),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(ctx, false),
@@ -251,43 +238,16 @@ class SettingsScreen extends StatelessWidget {
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
             style: TextButton.styleFrom(foregroundColor: Colors.orange),
-            child: const Text('重置'),
+            child: const Text('重试'),
           ),
         ],
       ),
     );
     if (ok == true && context.mounted) {
-      await context.read<TimelineProvider>().resetUploadStatus();
+      context.read<TimelineProvider>().retryAllFailed();
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('上传状态已重置, 正在重新上传...')),
-        );
-      }
-    }
-  }
-
-  Future<void> _confirmSync(BuildContext context) async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('手动同步'),
-        content: const Text('将所有本地记录同步到服务端？'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('取消')),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('同步'),
-          ),
-        ],
-      ),
-    );
-    if (ok == true && context.mounted) {
-      await context.read<TimelineProvider>().syncAllToServer();
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('同步完成')),
+          const SnackBar(content: Text('正在重试失败的上传...')),
         );
       }
     }
