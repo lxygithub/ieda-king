@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:mmkv/mmkv.dart';
 
 import '../l10n/app_localizations.dart';
 import '../models/shared_file.dart';
@@ -43,17 +43,17 @@ class _TimelineScreenState extends State<TimelineScreen> {
   }
 
   Future<void> _loadViewPref() async {
-    final prefs = await SharedPreferences.getInstance();
+    final mmkv = MMKV.defaultMMKV();
     if (mounted) {
-      setState(() => _isGridView = prefs.getBool('grid_view') ?? false);
+      setState(() => _isGridView = mmkv.decodeBool('grid_view') ?? false);
     }
   }
 
   Future<void> _toggleView() async {
     final newVal = !_isGridView;
     setState(() => _isGridView = newVal);
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('grid_view', newVal);
+    final mmkv = MMKV.defaultMMKV();
+    mmkv.encodeBool('grid_view', newVal);
   }
 
   void _openDetail(SharedFile file) {

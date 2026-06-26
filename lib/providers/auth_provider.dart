@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:mmkv/mmkv.dart';
 
 import '../services/api_service.dart';
 
@@ -27,11 +27,11 @@ class AuthProvider extends ChangeNotifier {
     _isLoading = true;
     notifyListeners();
     try {
-      final prefs = await SharedPreferences.getInstance();
-      _token = prefs.getString('jwt_token');
-      _userId = prefs.getInt('user_id');
-      _username = prefs.getString('username');
-      _isAdmin = prefs.getBool('is_admin') ?? false;
+      final mmkv = MMKV.defaultMMKV();
+      _token = mmkv.decodeString('jwt_token');
+      _userId = mmkv.decodeInt('user_id');
+      _username = mmkv.decodeString('username');
+      _isAdmin = mmkv.decodeBool('is_admin') ?? false;
       ApiService.instance.token = _token;
       // Register token expiry callback
       ApiService.instance.onTokenExpired = () {
@@ -64,17 +64,17 @@ class AuthProvider extends ChangeNotifier {
   }
 
   Future<void> _persist() async {
-    final prefs = await SharedPreferences.getInstance();
+    final mmkv = MMKV.defaultMMKV();
     if (_token != null) {
-      await prefs.setString('jwt_token', _token!);
-      await prefs.setInt('user_id', _userId!);
-      await prefs.setString('username', _username!);
-      await prefs.setBool('is_admin', _isAdmin);
+      mmkv.encodeString('jwt_token', _token!);
+      mmkv.encodeInt('user_id', _userId!);
+      mmkv.encodeString('username', _username!);
+      mmkv.encodeBool('is_admin', _isAdmin);
     } else {
-      await prefs.remove('jwt_token');
-      await prefs.remove('user_id');
-      await prefs.remove('username');
-      await prefs.remove('is_admin');
+      mmkv.removeValue('jwt_token');
+      mmkv.removeValue('user_id');
+      mmkv.removeValue('username');
+      mmkv.removeValue('is_admin');
     }
   }
 

@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:mmkv/mmkv.dart';
 
 import '../providers/auth_provider.dart';
 import '../services/api_service.dart';
@@ -26,8 +26,8 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Future<void> _loadLastUsername() async {
-    final prefs = await SharedPreferences.getInstance();
-    final saved = prefs.getString('last_username');
+    final mmkv = MMKV.defaultMMKV();
+    final saved = mmkv.decodeString('last_username');
     if (saved != null && saved.isNotEmpty && mounted) {
       _usernameCtrl.text = saved;
       _passwordFocus.requestFocus();
@@ -43,8 +43,8 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Future<void> _saveLastUsername(String name) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('last_username', name);
+    final mmkv = MMKV.defaultMMKV();
+    mmkv.encodeString('last_username', name);
   }
 
   Future<void> _login() async {

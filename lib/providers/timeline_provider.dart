@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:mmkv/mmkv.dart';
 
 import '../models/shared_file.dart';
 import '../services/api_service.dart';
@@ -10,6 +11,7 @@ class TimelineProvider extends ChangeNotifier {
   static const int _pageSize = 20;
 
   List<SharedFile> _files = [];
+  final Map<String, String?> _uploadingIds = {}; // fileId -> uploadId (null=single upload)
   bool _initialized = false;
   bool _loading = false;
   bool _loadingMore = false;
@@ -304,49 +306,134 @@ class TimelineProvider extends ChangeNotifier {
     }
   }
 
-  // ===== API Upload (replaces direct S3 upload) =====
+  // ===== API Upload with chunked resume support =====
 
-  /// Upload file binary through the API. API stores to S3 and returns s3Key.
+  static const int _chunkSize = 5 * 1024 * 1024; // 5MB
+
   Future<void> _uploadViaApi(SharedFile file) async {
+    if (_uploadingIds.containsKey(file.id)) return;
+    _uploadingIds[file.id] = null;
     final idx = _files.indexWhere((f) => f.id == file.id);
-    if (idx == -1) return;
-
-    // Already uploaded
-    if (file.s3Key != null) return;
-
-    // No local file to upload (metadata-only sync already done via _persist)
+    if (idx == -1) { _uploadingIds.remove(file.id); return; }
+    if (file.s3Key != null) { _uploadingIds.remove(file.id); return; }
     final localPath = file.localPath;
-    if (localPath == null || !File(localPath).existsSync()) return;
+    if (localPath == null || !File(localPath).existsSync()) { _uploadingIds.remove(file.id); return; }
+
+    final fp = File(localPath);
+    final fileSize = await fp.length();
 
     _files[idx] = _files[idx].copyWith(uploadProgress: 0.0);
     notifyListeners();
 
     try {
-      final result = await ApiService.instance.uploadFile(
-        file.localPath!,
-        fileId: file.id,
-        name: file.name,
-        type: file.type.label,
-        mimeType: file.mimeType,
-        onProgress: (progress) {
-          _files[idx] = _files[idx].copyWith(uploadProgress: progress);
-          notifyListeners();
-        },
-      );
-      _files[idx] = _files[idx].copyWith(
-        s3Key: result['s3Key'],
-        clearUploadProgress: true,
-      );
-      // Re-sync after upload to update server with s3Key
-      ApiService.instance.syncFile(_files[idx].toSyncJson());
-      debugPrint('[API] upload done: ${file.id} -> ${result['s3Key']}');
+      // Small files: simple upload
+      if (fileSize < _chunkSize) {
+        final result = await ApiService.instance.uploadFile(
+          localPath, fileId: file.id, name: file.name,
+          type: file.type.label, mimeType: file.mimeType,
+          onProgress: (p) {
+            _files[idx] = _files[idx].copyWith(uploadProgress: p);
+            notifyListeners();
+          },
+        );
+        final currentIdx = _files.indexWhere((f) => f.id == file.id);
+        if (currentIdx >= 0) {
+          _files[currentIdx] = _files[currentIdx].copyWith(s3Key: result['s3Key'], clearUploadProgress: true);
+        }
+        ApiService.instance.syncFile(file.toSyncJson());
+        debugPrint('[API] upload done: ${file.id} -> ${result['s3Key']}');
+        await _persist();
+        notifyListeners();
+        return;
+      }
+
+      // Large files: chunked upload with resume
+      final api = ApiService.instance;
+      final mmkv = MMKV.defaultMMKV();
+      final uploadKey = 'upload_id_${file.id}';
+      final fileSizeMb = (fileSize / 1048576).toStringAsFixed(1);
+      debugPrint('[chunk] start: ${file.name} size=${fileSizeMb}MB id=${file.id}');
+
+      // Try to resume existing upload
+      var uploadId = mmkv.decodeString(uploadKey);
+      Set<int> doneParts = {};
+
+      if (uploadId != null) {
+        try {
+          final parts = await api.listUploadParts(uploadId);
+          for (final p in parts) {
+            doneParts.add(p['part_number'] as int);
+          }
+          debugPrint('[chunk] resume upload_id=$uploadId ${doneParts.length} parts already done');
+        } catch (_) {
+          debugPrint('[chunk] resume failed, start fresh');
+          uploadId = null;
+        }
+      }
+
+      if (uploadId == null) {
+        final init = await api.initMultipartUpload(
+          fileId: file.id, name: file.name,
+          type: file.type.label, mimeType: file.mimeType,
+          fileSize: fileSize,
+        );
+        uploadId = init['upload_id'] as String;
+        _uploadingIds[file.id] = uploadId;
+        mmkv.encodeString(uploadKey, uploadId);
+        debugPrint('[chunk] init upload_id=$uploadId');
+      }
+      final totalChunks = (fileSize / _chunkSize).ceil();
+      debugPrint('[chunk] total ${totalChunks}x${_chunkSize ~/ 1048576}MB parts, done=${doneParts.length}');
+
+      for (int i = 0; i < totalChunks; i++) {
+        final partNum = i + 1;
+        if (doneParts.contains(partNum)) {
+          debugPrint('[chunk] part $partNum/$totalChunks skipped (already done)');
+          continue;
+        }
+
+        final offset = i * _chunkSize;
+        final length = (i == totalChunks - 1) ? fileSize - offset : _chunkSize;
+        final partMb = (length / 1048576).toStringAsFixed(1);
+
+        // Retry failed chunk up to 3 times
+        for (int retry = 0; retry < 3; retry++) {
+          try {
+            debugPrint('[chunk] uploading part $partNum/$totalChunks (${partMb}MB) try=${retry + 1}');
+            final sw = Stopwatch()..start();
+            await api.uploadPart(uploadId, partNumber: partNum, filePath: localPath, offset: offset, length: length);
+            sw.stop();
+            debugPrint('[chunk] part $partNum/$totalChunks done in ${sw.elapsedMilliseconds}ms');
+            break;
+          } catch (e) {
+            if (retry == 2) {
+              debugPrint('[chunk] part $partNum FAILED after 3 retries: $e');
+              rethrow;
+            }
+            debugPrint('[chunk] part $partNum error (try ${retry + 1}): $e');
+            await Future.delayed(Duration(seconds: 2 * (retry + 1)));
+          }
+        }
+        _files[idx] = _files[idx].copyWith(uploadProgress: (i + 1) / totalChunks);
+        notifyListeners();
+      }
+
+      debugPrint('[chunk] completing upload...');
+      final result = await api.completeMultipartUpload(uploadId);
+      mmkv.removeValue(uploadKey);
+      final curIdx = _files.indexWhere((f) => f.id == file.id);
+      if (curIdx >= 0) {
+        _files[curIdx] = _files[curIdx].copyWith(s3Key: result['s3Key'], clearUploadProgress: true);
+      }
+      ApiService.instance.syncFile(file.toSyncJson());
+      debugPrint('[chunk] DONE: ${file.id} -> ${result['s3Key']}');
     } catch (e) {
       debugPrint('[API] upload error: $e');
-      _files[idx] = _files[idx].copyWith(
-        clearUploadProgress: true,
-        uploadError: '上传失败: $e',
-      );
+      if (idx < _files.length && _files[idx].id == file.id) {
+        _files[idx] = _files[idx].copyWith(clearUploadProgress: true, uploadError: '上传失败: $e');
+      }
     }
+    _uploadingIds.remove(file.id);
     await _persist();
     notifyListeners();
   }
@@ -432,12 +519,18 @@ class TimelineProvider extends ChangeNotifier {
   // ===== Delete =====
 
   Future<void> deleteFile(SharedFile file) async {
+    final uploadId = _uploadingIds[file.id];
+    if (uploadId != null) {
+      try { await ApiService.instance.abortMultipartUpload(uploadId); } catch (_) {}
+    }
+    _uploadingIds.remove(file.id);
     _files.removeWhere((f) => f.id == file.id);
     ApiService.instance.deleteFile(file.id);
     notifyListeners();
   }
 
   Future<void> clearAll() async {
+    _uploadingIds.clear();
     _files.clear();
     ApiService.instance.clearAll();
     notifyListeners();

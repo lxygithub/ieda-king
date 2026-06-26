@@ -202,6 +202,77 @@ class ApiService {
     throw ApiException(resp.statusCode, _detail(resp));
   }
 
+  // ========== Chunked Upload (Resumable) ==========
+
+  Future<Map<String, dynamic>> initMultipartUpload({
+    required String fileId,
+    required String name,
+    required String type,
+    String? mimeType,
+    required int fileSize,
+  }) async {
+    final url = '$baseUrl/api/files/upload/init';
+    final request = http.MultipartRequest('POST', Uri.parse(url));
+    if (token != null) request.headers['Authorization'] = 'Bearer $token';
+    request.fields['file_id'] = fileId;
+    request.fields['name'] = name;
+    request.fields['type'] = type;
+    if (mimeType != null) request.fields['mimeType'] = mimeType;
+    request.fields['file_size'] = fileSize.toString();
+    final resp = await http.Response.fromStream(await request.send().timeout(const Duration(seconds: 30)));
+    _checkAuth(resp);
+    if (resp.statusCode == 200) return jsonDecode(resp.body) as Map<String, dynamic>;
+    throw ApiException(resp.statusCode, _detail(resp));
+  }
+
+  Future<Map<String, dynamic>> uploadPart(
+    String uploadId, {
+    required int partNumber,
+    required String filePath,
+    required int offset,
+    required int length,
+  }) async {
+    final url = '$baseUrl/api/files/upload/$uploadId/part';
+    final file = File(filePath).openSync();
+    file.setPositionSync(offset);
+    final chunk = file.readSync(length);
+    file.closeSync();
+    final request = http.MultipartRequest('POST', Uri.parse(url));
+    if (token != null) request.headers['Authorization'] = 'Bearer $token';
+    request.fields['part_number'] = partNumber.toString();
+    request.files.add(http.MultipartFile.fromBytes('file', chunk, filename: 'part_$partNumber'));
+    final resp = await http.Response.fromStream(await request.send().timeout(const Duration(minutes: 10)));
+    _checkAuth(resp);
+    if (resp.statusCode == 200) return jsonDecode(resp.body) as Map<String, dynamic>;
+    throw ApiException(resp.statusCode, _detail(resp));
+  }
+
+  Future<Map<String, dynamic>> completeMultipartUpload(String uploadId) async {
+    final url = '$baseUrl/api/files/upload/$uploadId/complete';
+    final resp = await http.post(Uri.parse(url), headers: _headers).timeout(const Duration(seconds: 30));
+    _checkAuth(resp);
+    if (resp.statusCode == 200) return jsonDecode(resp.body) as Map<String, dynamic>;
+    throw ApiException(resp.statusCode, _detail(resp));
+  }
+
+  Future<Map<String, dynamic>> abortMultipartUpload(String uploadId) async {
+    final url = '$baseUrl/api/files/upload/$uploadId/abort';
+    final resp = await http.post(Uri.parse(url), headers: _headers).timeout(const Duration(seconds: 15));
+    if (resp.statusCode == 200) return jsonDecode(resp.body) as Map<String, dynamic>;
+    throw ApiException(resp.statusCode, _detail(resp));
+  }
+
+  Future<List<Map<String, dynamic>>> listUploadParts(String uploadId) async {
+    final url = '$baseUrl/api/files/upload/$uploadId/parts';
+    final resp = await http.get(Uri.parse(url), headers: _headers).timeout(const Duration(seconds: 15));
+    _checkAuth(resp);
+    if (resp.statusCode == 200) {
+      final body = jsonDecode(resp.body) as Map<String, dynamic>;
+      return (body['parts'] as List<dynamic>?)?.cast<Map<String, dynamic>>() ?? [];
+    }
+    throw ApiException(resp.statusCode, _detail(resp));
+  }
+
   // ========== Files ==========
 
   /// Fetch files with pagination and filters. Returns {files: [...], total: N}.
