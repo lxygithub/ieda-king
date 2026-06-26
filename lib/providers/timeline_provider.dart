@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -382,7 +383,14 @@ class TimelineProvider extends ChangeNotifier {
     if (idx == -1) { _uploadingIds.remove(file.id); return; }
     if (file.s3Key != null) { _uploadingIds.remove(file.id); return; }
     final localPath = file.localPath;
-    if (localPath == null || !File(localPath).existsSync()) { _uploadingIds.remove(file.id); return; }
+    if (localPath == null || !File(localPath).existsSync()) {
+      _uploadingIds.remove(file.id);
+      if (idx < _files.length) {
+        _files[idx] = _files[idx].copyWith(uploadError: '本地文件已删除，无法上传');
+        notifyListeners();
+      }
+      return;
+    }
 
     _ensureUploadService();
 
@@ -532,12 +540,40 @@ class TimelineProvider extends ChangeNotifier {
   }
 
   /// Sync all local files to server (manual sync button).
-  /// No-op: SQLite removed, all data from API.
-  Future<void> _persist() async {}
+  /// Persist localPath map in MMKV so restarts can re-upload pending files.
+  Future<void> _persist() async {
+    final mmkv = MMKV.defaultMMKV();
+    final localPaths = <String, String>{};
+    for (final f in _files) {
+      if (f.localPath != null) {
+        localPaths[f.id] = f.localPath!;
+      }
+    }
+    mmkv.encodeString('local_paths', jsonEncode(localPaths));
+  }
 
   Future<void> loadFromDisk() async {
     if (_initialized) return;
     _initialized = true;
+
+    // Restore persisted localPaths into current _files before API fetch
+    final mmkv = MMKV.defaultMMKV();
+    final saved = mmkv.decodeString('local_paths');
+    if (saved != null && saved.isNotEmpty) {
+      try {
+        final map = jsonDecode(saved) as Map<String, dynamic>;
+        for (final entry in map.entries) {
+          if (entry.value != null) {
+            // Set localPath on any matching file already in _files
+            final idx = _files.indexWhere((f) => f.id == entry.key);
+            if (idx >= 0 && _files[idx].localPath == null) {
+              _files[idx] = _files[idx].copyWith(localPath: entry.value as String);
+            }
+          }
+        }
+      } catch (_) {}
+    }
+
     // Fetch from API on startup
     await fetchFromApi();
   }
