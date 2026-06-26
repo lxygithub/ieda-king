@@ -243,10 +243,15 @@ class ApiService {
     request.fields['part_number'] = partNumber.toString();
 
     if (onProgress != null) {
-      // Wrap bytes in a stream that reports progress
+      // Split chunk into 64KB pieces so progress updates smoothly
+      const pieceSize = 64 * 1024;
       int sent = 0;
-      final controller = http.ByteStream.fromBytes(chunk);
-      final progressStream = controller.transform(
+      final pieces = <List<int>>[];
+      for (int off = 0; off < length; off += pieceSize) {
+        final end = (off + pieceSize > length) ? length : off + pieceSize;
+        pieces.add(chunk.sublist(off, end));
+      }
+      final progressStream = http.ByteStream(Stream.fromIterable(pieces)).transform(
         StreamTransformer<List<int>, List<int>>.fromHandlers(
           handleData: (data, sink) {
             sent += data.length;
