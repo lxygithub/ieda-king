@@ -374,18 +374,22 @@ class TimelineProvider extends ChangeNotifier {
 
   // ===== API Upload with chunked resume support =====
 
+  /// Helper: find file index by ID (safe across _files refreshes).
+  int _fileIdx(String id) => _files.indexWhere((f) => f.id == id);
+
   static const int _chunkSize = 50 * 1024 * 1024; // 50MB (reduced Garage compaction pressure)
 
   Future<void> _uploadViaApi(SharedFile file) async {
     if (_uploadingIds.containsKey(file.id)) return;
     _uploadingIds[file.id] = null;
-    final idx = _files.indexWhere((f) => f.id == file.id);
+    var idx = _fileIdx(file.id);
     if (idx == -1) { _uploadingIds.remove(file.id); return; }
     if (file.s3Key != null) { _uploadingIds.remove(file.id); return; }
     final localPath = file.localPath;
     if (localPath == null || !File(localPath).existsSync()) {
       _uploadingIds.remove(file.id);
-      if (idx < _files.length) {
+      idx = _fileIdx(file.id);
+      if (idx >= 0) {
         _files[idx] = _files[idx].copyWith(uploadError: '本地文件已删除，无法上传');
         notifyListeners();
       }
@@ -395,6 +399,8 @@ class TimelineProvider extends ChangeNotifier {
     _ensureUploadService();
 
     // Show progress immediately — don't wait for file size read
+    idx = _fileIdx(file.id);
+    if (idx < 0) { _uploadingIds.remove(file.id); return; }
     _files[idx] = _files[idx].copyWith(uploadProgress: 0.0);
     notifyListeners();
 
@@ -410,12 +416,14 @@ class TimelineProvider extends ChangeNotifier {
           localPath, fileId: file.id, name: file.name,
           type: file.type.label, mimeType: file.mimeType,
           onProgress: (p) {
-            _files[idx] = _files[idx].copyWith(uploadProgress: p);
+            final i = _fileIdx(file.id);
+            if (i < 0) return;
+            _files[i] = _files[i].copyWith(uploadProgress: p);
             notifyListeners();
             _refreshUploadNotification();
           },
         );
-        final currentIdx = _files.indexWhere((f) => f.id == file.id);
+        final currentIdx = _fileIdx(file.id);
         if (currentIdx >= 0) {
           _files[currentIdx] = _files[currentIdx].copyWith(s3Key: result['s3Key'], clearUploadProgress: true);
         }
@@ -496,7 +504,10 @@ class TimelineProvider extends ChangeNotifier {
             await Future.delayed(Duration(seconds: 2 * (retry + 1)));
           }
         }
-        _files[idx] = _files[idx].copyWith(uploadProgress: (i + 1) / totalChunks);
+        final pIdx = _fileIdx(file.id);
+        if (pIdx >= 0) {
+          _files[pIdx] = _files[pIdx].copyWith(uploadProgress: (i + 1) / totalChunks);
+        }
         notifyListeners();
         _refreshUploadNotification();
       }
@@ -504,7 +515,7 @@ class TimelineProvider extends ChangeNotifier {
       debugPrint('[chunk] completing upload...');
       final result = await api.completeMultipartUpload(uploadId);
       mmkv.removeValue(uploadKey);
-      final curIdx = _files.indexWhere((f) => f.id == file.id);
+      final curIdx = _fileIdx(file.id);
       if (curIdx >= 0) {
         _files[curIdx] = _files[curIdx].copyWith(s3Key: result['s3Key'], clearUploadProgress: true);
       }
@@ -512,8 +523,9 @@ class TimelineProvider extends ChangeNotifier {
       debugPrint('[chunk] DONE: ${file.id} -> ${result['s3Key']}');
     } catch (e) {
       debugPrint('[API] upload error: $e');
-      if (idx < _files.length && _files[idx].id == file.id) {
-        _files[idx] = _files[idx].copyWith(clearUploadProgress: true, uploadError: '上传失败: $e');
+      final errIdx = _fileIdx(file.id);
+      if (errIdx >= 0) {
+        _files[errIdx] = _files[errIdx].copyWith(clearUploadProgress: true, uploadError: '上传失败: $e');
       }
     }
     _uploadingIds.remove(file.id);
