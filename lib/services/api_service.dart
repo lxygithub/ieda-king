@@ -231,6 +231,7 @@ class ApiService {
     required String filePath,
     required int offset,
     required int length,
+    void Function(double)? onProgress,
   }) async {
     final url = '$baseUrl/api/files/upload/$uploadId/part';
     final file = File(filePath).openSync();
@@ -240,7 +241,25 @@ class ApiService {
     final request = http.MultipartRequest('POST', Uri.parse(url));
     if (token != null) request.headers['Authorization'] = 'Bearer $token';
     request.fields['part_number'] = partNumber.toString();
-    request.files.add(http.MultipartFile.fromBytes('file', chunk, filename: 'part_$partNumber'));
+
+    if (onProgress != null) {
+      // Wrap bytes in a stream that reports progress
+      int sent = 0;
+      final controller = http.ByteStream.fromBytes(chunk);
+      final progressStream = controller.transform(
+        StreamTransformer<List<int>, List<int>>.fromHandlers(
+          handleData: (data, sink) {
+            sent += data.length;
+            onProgress(sent / length);
+            sink.add(data);
+          },
+        ),
+      );
+      request.files.add(http.MultipartFile('file', progressStream, length, filename: 'part_$partNumber'));
+    } else {
+      request.files.add(http.MultipartFile.fromBytes('file', chunk, filename: 'part_$partNumber'));
+    }
+
     final resp = await http.Response.fromStream(await request.send().timeout(const Duration(minutes: 10)));
     _checkAuth(resp);
     if (resp.statusCode == 200) return jsonDecode(resp.body) as Map<String, dynamic>;

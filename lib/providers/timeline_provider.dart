@@ -491,7 +491,22 @@ class TimelineProvider extends ChangeNotifier {
           try {
             debugPrint('[chunk] uploading part $partNum/$totalChunks (${partMb}MB) try=${retry + 1}');
             final sw = Stopwatch()..start();
-            await api.uploadPart(uploadId, partNumber: partNum, filePath: localPath, offset: offset, length: length);
+            await api.uploadPart(
+              uploadId,
+              partNumber: partNum,
+              filePath: localPath,
+              offset: offset,
+              length: length,
+              onProgress: (p) {
+                final overall = (i + p) / totalChunks;
+                final pi = _fileIdx(file.id);
+                if (pi >= 0) {
+                  _files[pi] = _files[pi].copyWith(uploadProgress: overall);
+                }
+                notifyListeners();
+                _refreshUploadNotification();
+              },
+            );
             sw.stop();
             debugPrint('[chunk] part $partNum/$totalChunks done in ${sw.elapsedMilliseconds}ms');
             break;
