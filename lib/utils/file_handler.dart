@@ -103,6 +103,7 @@ class FileHandler {
       name: originalName,
       type: type,
       localPath: target.path,
+      sourceUri: sharedPath,
       receivedAt: now,
       mimeType: mimeType ?? lookupMimeType(originalName),
       fileSize: stat.size,
@@ -128,6 +129,31 @@ class FileHandler {
 
   static Future<Directory> getAppDocumentDir() =>
       getApplicationDocumentsDirectory();
+
+  /// Total size of received/ directory in bytes
+  static Future<int> getCacheSize() async {
+    final dir = Directory('${(await getAppDocumentDir()).path}/received');
+    if (!await dir.exists()) return 0;
+    int total = 0;
+    await for (final f in dir.list(recursive: true)) {
+      if (f is File) total += await f.length();
+    }
+    return total;
+  }
+
+  /// Delete all files in received/ directory. Returns number of files deleted.
+  static Future<int> clearCache() async {
+    final dir = Directory('${(await getAppDocumentDir()).path}/received');
+    if (!await dir.exists()) return 0;
+    int count = 0;
+    await for (final f in dir.list()) {
+      try {
+        await f.delete();
+        count++;
+      } catch (_) {}
+    }
+    return count;
+  }
 
   /// Format bytes to human-readable string
   static String formatSize(int bytes) {

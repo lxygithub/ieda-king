@@ -379,21 +379,54 @@ class TimelineProvider extends ChangeNotifier {
 
   static const int _chunkSize = 50 * 1024 * 1024; // 50MB (reduced Garage compaction pressure)
 
+  /// Try to re-copy file from original source path into received/.
+  /// Returns new localPath on success, null if source is also gone.
+  Future<String?> _recoverFromSourceUri(SharedFile file) async {
+    final src = file.sourceUri;
+    if (src == null) return null;
+    try {
+      final source = File(src);
+      if (!await source.exists()) return null;
+      final dir = await FileHandler.getAppDocumentDir();
+      final targetDir = Directory('${dir.path}/received');
+      if (!await targetDir.exists()) await targetDir.create(recursive: true);
+      final ext = file.name.contains('.') ? '.${file.name.split('.').last}' : '';
+      final target = File('${targetDir.path}/${DateTime.now().millisecondsSinceEpoch}_${file.id}$ext');
+      await source.copy(target.path);
+      debugPrint('[Recover] restored ${file.id} from $src');
+      return target.path;
+    } catch (e) {
+      debugPrint('[Recover] failed for ${file.id}: $e');
+      return null;
+    }
+  }
+
   Future<void> _uploadViaApi(SharedFile file) async {
     if (_uploadingIds.containsKey(file.id)) return;
     _uploadingIds[file.id] = null;
     var idx = _fileIdx(file.id);
     if (idx == -1) { _uploadingIds.remove(file.id); return; }
     if (file.s3Key != null) { _uploadingIds.remove(file.id); return; }
-    final localPath = file.localPath;
+    var localPath = file.localPath;
     if (localPath == null || !File(localPath).existsSync()) {
-      _uploadingIds.remove(file.id);
-      idx = _fileIdx(file.id);
-      if (idx >= 0) {
-        _files[idx] = _files[idx].copyWith(uploadError: '本地文件已删除，无法上传');
-        notifyListeners();
+      // Fallback: try to re-copy from original path
+      final recovered = await _recoverFromSourceUri(file);
+      if (recovered != null) {
+        localPath = recovered;
+        idx = _fileIdx(file.id);
+        if (idx >= 0) {
+          _files[idx] = _files[idx].copyWith(localPath: recovered);
+          notifyListeners();
+        }
+      } else {
+        _uploadingIds.remove(file.id);
+        idx = _fileIdx(file.id);
+        if (idx >= 0) {
+          _files[idx] = _files[idx].copyWith(uploadError: '本地文件已删除，无法上传');
+          notifyListeners();
+        }
+        return;
       }
-      return;
     }
 
     _ensureUploadService();

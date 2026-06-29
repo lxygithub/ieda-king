@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../providers/auth_provider.dart';
 import '../providers/timeline_provider.dart';
 import '../services/api_service.dart';
+import '../utils/file_handler.dart';
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
@@ -73,12 +74,24 @@ class SettingsScreen extends StatelessWidget {
           Text('数据管理', style: theme.textTheme.titleSmall),
           const SizedBox(height: 8),
           Card(
-            child: ListTile(
-              leading: const Icon(Icons.delete_sweep_outlined),
-              title: const Text('清空所有记录'),
-              subtitle: const Text('删除时间线全部记录, 保留本地文件'),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () => _confirmClearAll(context),
+            child: Column(
+              children: [
+                ListTile(
+                  leading: const Icon(Icons.cleaning_services_outlined),
+                  title: const Text('清理本地缓存'),
+                  subtitle: const Text('删除 received/ 目录下的本地文件副本'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => _confirmClearCache(context),
+                ),
+                const Divider(height: 1, indent: 16, endIndent: 16),
+                ListTile(
+                  leading: const Icon(Icons.delete_sweep_outlined),
+                  title: const Text('清空所有记录'),
+                  subtitle: const Text('删除时间线全部记录, 保留本地文件'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => _confirmClearAll(context),
+                ),
+              ],
             ),
           ),
         ],
@@ -275,6 +288,40 @@ class SettingsScreen extends StatelessWidget {
       await context.read<TimelineProvider>().clearAll();
       if (context.mounted) {
         Navigator.pop(context);
+      }
+    }
+  }
+
+  Future<void> _confirmClearCache(BuildContext context) async {
+    final size = await FileHandler.getCacheSize();
+    if (!context.mounted) return;
+
+    final sizeStr = FileHandler.formatSize(size);
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('清理本地缓存'),
+        content: Text('当前缓存大小: $sizeStr\n\n'
+            '将删除 received/ 目录下的所有本地文件副本。\n'
+            '已上传到 S3 的文件不受影响，仍可在时间线中查看。'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.orange),
+            child: const Text('清理'),
+          ),
+        ],
+      ),
+    );
+    if (ok == true && context.mounted) {
+      final count = await FileHandler.clearCache();
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('已清理 $count 个文件, 释放 $sizeStr')),
+        );
       }
     }
   }
