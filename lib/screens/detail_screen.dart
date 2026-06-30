@@ -17,6 +17,7 @@ import '../models/shared_file.dart';
 import '../providers/timeline_provider.dart';
 import '../services/api_service.dart';
 import '../utils/file_handler.dart';
+import 'text_edit_screen.dart';
 
 class DetailScreen extends StatefulWidget {
   final SharedFile file;
@@ -30,41 +31,84 @@ class DetailScreen extends StatefulWidget {
 class _DetailScreenState extends State<DetailScreen> {
   String? _textPreview;
   bool _previewLoading = true;
+  late TextEditingController _titleCtrl;
   late TextEditingController _descCtrl;
+  late FocusNode _titleFocus;
+  late FocusNode _descFocus;
   late List<String> _tags;
 
   @override
   void initState() {
     super.initState();
+    _titleCtrl =
+        TextEditingController(text: widget.file.title ?? widget.file.name);
     _descCtrl = TextEditingController(text: widget.file.description ?? '');
+    _titleFocus = FocusNode();
+    _descFocus = FocusNode();
     _tags = List.from(widget.file.tags);
     _loadPreview();
   }
 
   @override
   void dispose() {
+    _titleCtrl.dispose();
     _descCtrl.dispose();
+    _titleFocus.dispose();
+    _descFocus.dispose();
     super.dispose();
   }
 
   Future<void> _loadPreview() async {
-    final txt = await FileHandler.readTextPreview(widget.file);
+    // First try to get from provider (latest edited content)
+    final provider = context.read<TimelineProvider>();
+    final files = provider.files;
+    final idx = files.indexWhere((f) => f.id == widget.file.id);
+    String? content;
+    if (idx != -1 && files[idx].textContent != null) {
+      content = files[idx].textContent;
+    } else {
+      // Fallback to file
+      content = await FileHandler.readTextPreview(widget.file);
+    }
     if (mounted) {
       setState(() {
-        _textPreview = txt;
+        _textPreview = content;
         _previewLoading = false;
       });
     }
   }
 
-  void _saveDescription() {
-    context
-        .read<TimelineProvider>()
-        .updateDescription(widget.file.id, _descCtrl.text.trim());
+  Future<void> _saveTitle() async {
+    final title = _titleCtrl.text.trim();
+    await context.read<TimelineProvider>().updateTitle(widget.file.id, title);
+    _titleFocus.unfocus();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('标题已保存'), duration: Duration(seconds: 1)),
+      );
+    }
   }
 
-  void _saveTags() {
-    context.read<TimelineProvider>().updateTags(widget.file.id, _tags);
+  Future<void> _saveDescription() async {
+    final desc = _descCtrl.text.trim();
+    await context
+        .read<TimelineProvider>()
+        .updateDescription(widget.file.id, desc);
+    _descFocus.unfocus();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('描述已保存'), duration: Duration(seconds: 1)),
+      );
+    }
+  }
+
+  Future<void> _saveTags() async {
+    await context.read<TimelineProvider>().updateTags(widget.file.id, _tags);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('标签已保存'), duration: Duration(seconds: 1)),
+      );
+    }
   }
 
   @override
@@ -74,7 +118,8 @@ class _DetailScreenState extends State<DetailScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(f.name, overflow: TextOverflow.ellipsis),
+        title: Text(f.title != null && f.title!.isNotEmpty ? f.title! : f.name,
+            overflow: TextOverflow.ellipsis),
         actions: [
           IconButton(
               icon: const Icon(Icons.share),
@@ -91,6 +136,7 @@ class _DetailScreenState extends State<DetailScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             _buildPreview(theme, f),
+            _buildTitleSection(theme, f),
             _buildTagSection(theme, f),
             _buildDescriptionSection(theme, f),
             const Divider(),
@@ -154,8 +200,11 @@ class _DetailScreenState extends State<DetailScreen> {
     Widget cover;
     if (f.thumbS3Key != null) {
       final token = ApiService.instance.token;
-      final url = '${ApiService.instance.baseUrl}${f.thumbUrl}?token=${token ?? ''}';
-      cover = CachedNetworkImage(imageUrl: url, fit: BoxFit.cover,
+      final url =
+          '${ApiService.instance.baseUrl}${f.thumbUrl}?token=${token ?? ''}';
+      cover = CachedNetworkImage(
+          imageUrl: url,
+          fit: BoxFit.cover,
           placeholder: (_, __) => const SizedBox.shrink(),
           errorWidget: (_, __, ___) => const SizedBox.shrink());
     } else {
@@ -173,14 +222,18 @@ class _DetailScreenState extends State<DetailScreen> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Icon(Icons.play_circle_outline, size: 72, color: Colors.white54),
+                const Icon(Icons.play_circle_outline,
+                    size: 72, color: Colors.white54),
                 const SizedBox(height: 16),
-                Text(f.name, style: const TextStyle(color: Colors.white70, fontSize: 14)),
+                Text(f.name,
+                    style:
+                        const TextStyle(color: Colors.white70, fontSize: 14)),
                 if (f.fileSize > 0)
                   Padding(
                     padding: const EdgeInsets.only(top: 4),
                     child: Text(FileHandler.formatSize(f.fileSize),
-                        style: const TextStyle(color: Colors.white38, fontSize: 12)),
+                        style: const TextStyle(
+                            color: Colors.white38, fontSize: 12)),
                   ),
                 const SizedBox(height: 24),
                 FilledButton.icon(
@@ -205,18 +258,98 @@ class _DetailScreenState extends State<DetailScreen> {
     }
     if (_textPreview == null) return _noPreview();
 
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      constraints: const BoxConstraints(maxHeight: 320),
-      child: SelectableText(
-        _textPreview!,
-        style: theme.textTheme.bodyMedium
-            ?.copyWith(fontFamily: 'monospace', height: 1.5),
+    return InkWell(
+      onTap: () async {
+        await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => TextEditScreen(file: widget.file),
+          ),
+        );
+        // Refresh after returning from edit screen
+        if (mounted) {
+          setState(() {
+            _previewLoading = true;
+          });
+          _loadPreview();
+        }
+      },
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(16),
+        constraints: const BoxConstraints(maxHeight: 300),
+        decoration: BoxDecoration(
+          border: Border.all(color: theme.colorScheme.outlineVariant),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.edit, size: 16, color: theme.colorScheme.primary),
+                const SizedBox(width: 4),
+                Text(
+                  '点击编辑',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.primary,
+                  ),
+                ),
+                const Spacer(),
+                Text(
+                  '${_textPreview!.length} 字',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Flexible(
+              child: SingleChildScrollView(
+                child: SelectableText(
+                  _textPreview!,
+                  style: theme.textTheme.bodyMedium
+                      ?.copyWith(fontFamily: 'monospace', height: 1.5),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
 
+  // ======== Title ========
+
+  Widget _buildTitleSection(ThemeData theme, SharedFile f) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('标题', style: theme.textTheme.titleSmall),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _titleCtrl,
+            maxLines: 1,
+            decoration: InputDecoration(
+              hintText: '输入标题（可选）',
+              border: const OutlineInputBorder(),
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              suffixIcon: IconButton(
+                icon: const Icon(Icons.check, size: 18),
+                onPressed: _saveTitle,
+              ),
+            ),
+            onSubmitted: (_) => _saveTitle(),
+          ),
+        ],
+      ),
+    );
+  }
 
   // ======== Tags ========
 
@@ -228,7 +361,8 @@ class _DetailScreenState extends State<DetailScreen> {
         children: [
           Row(
             children: [
-              Text(AppLocalizations.of(context).tagLabel, style: theme.textTheme.titleSmall),
+              Text(AppLocalizations.of(context).tagLabel,
+                  style: theme.textTheme.titleSmall),
               const Spacer(),
               TextButton.icon(
                 icon: const Icon(Icons.edit, size: 16),
@@ -239,21 +373,26 @@ class _DetailScreenState extends State<DetailScreen> {
           ),
           const SizedBox(height: 4),
           _tags.isEmpty
-              ? Text(AppLocalizations.of(context).noTag, style: theme.textTheme.bodySmall
-                  ?.copyWith(color: theme.colorScheme.onSurfaceVariant))
+              ? Text(AppLocalizations.of(context).noTag,
+                  style: theme.textTheme.bodySmall
+                      ?.copyWith(color: theme.colorScheme.onSurfaceVariant))
               : Wrap(
                   spacing: 6,
                   runSpacing: 4,
-                  children: _tags.map((t) => Chip(
-                    label: Text(t, style: const TextStyle(fontSize: 12)),
-                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    visualDensity: VisualDensity.compact,
-                    deleteIcon: const Icon(Icons.close, size: 14),
-                    onDeleted: () {
-                      setState(() => _tags.remove(t));
-                      _saveTags();
-                    },
-                  )).toList(),
+                  children: _tags
+                      .map((t) => Chip(
+                            label:
+                                Text(t, style: const TextStyle(fontSize: 12)),
+                            materialTapTargetSize:
+                                MaterialTapTargetSize.shrinkWrap,
+                            visualDensity: VisualDensity.compact,
+                            deleteIcon: const Icon(Icons.close, size: 14),
+                            onDeleted: () {
+                              setState(() => _tags.remove(t));
+                              _saveTags();
+                            },
+                          ))
+                      .toList(),
                 ),
         ],
       ),
@@ -290,22 +429,30 @@ class _DetailScreenState extends State<DetailScreen> {
               Wrap(
                 spacing: 6,
                 runSpacing: 4,
-                children: _tags.map((t) => Chip(
-                  label: Text(t, style: const TextStyle(fontSize: 12)),
-                  onDeleted: () {
-                    setState(() => _tags.remove(t));
-                    _saveTags();
-                  },
-                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  visualDensity: VisualDensity.compact,
-                )).toList(),
+                children: _tags
+                    .map((t) => Chip(
+                          label: Text(t, style: const TextStyle(fontSize: 12)),
+                          onDeleted: () {
+                            setState(() => _tags.remove(t));
+                            _saveTags();
+                          },
+                          materialTapTargetSize:
+                              MaterialTapTargetSize.shrinkWrap,
+                          visualDensity: VisualDensity.compact,
+                        ))
+                    .toList(),
               ),
             ],
           ],
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(ctx),
+            onPressed: () {
+              if (_tags.isNotEmpty) {
+                _saveTags();
+              }
+              Navigator.pop(ctx);
+            },
             child: Text(AppLocalizations.of(context).done),
           ),
         ],
@@ -321,7 +468,8 @@ class _DetailScreenState extends State<DetailScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(AppLocalizations.of(context).descriptionLabel, style: theme.textTheme.titleSmall),
+          Text(AppLocalizations.of(context).descriptionLabel,
+              style: theme.textTheme.titleSmall),
           const SizedBox(height: 8),
           TextField(
             controller: _descCtrl,
@@ -330,7 +478,8 @@ class _DetailScreenState extends State<DetailScreen> {
             decoration: InputDecoration(
               hintText: AppLocalizations.of(context).addDescription,
               border: const OutlineInputBorder(),
-              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
               suffixIcon: IconButton(
                 icon: const Icon(Icons.check, size: 18),
                 onPressed: _saveDescription,
@@ -351,24 +500,29 @@ class _DetailScreenState extends State<DetailScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(AppLocalizations.of(context).openWith, style: theme.textTheme.titleSmall),
+          Text(AppLocalizations.of(context).openWith,
+              style: theme.textTheme.titleSmall),
           const SizedBox(height: 12),
           Wrap(
             spacing: 12,
             runSpacing: 8,
             children: [
               _actionChip(
-                  icon: Icons.open_in_new, label: '系统应用',
+                  icon: Icons.open_in_new,
+                  label: '系统应用',
                   onTap: () => _openExternal(f)),
               _actionChip(
-                  icon: Icons.share, label: AppLocalizations.of(context).share,
+                  icon: Icons.share,
+                  label: AppLocalizations.of(context).share,
                   onTap: () => _shareFile(f)),
               if (f.type == SharedFileType.text || f.textContent != null)
                 _actionChip(
-                    icon: Icons.content_copy, label: '复制文本',
+                    icon: Icons.content_copy,
+                    label: '复制文本',
                     onTap: () => _copyText(f)),
               _actionChip(
-                  icon: Icons.content_paste, label: AppLocalizations.of(context).copyPath,
+                  icon: Icons.content_paste,
+                  label: AppLocalizations.of(context).copyPath,
                   onTap: () => _copyPath(f)),
             ],
           ),
@@ -387,7 +541,9 @@ class _DetailScreenState extends State<DetailScreen> {
   }
 
   Widget _actionChip(
-      {required IconData icon, required String label, required VoidCallback onTap}) {
+      {required IconData icon,
+      required String label,
+      required VoidCallback onTap}) {
     return ActionChip(
         avatar: Icon(icon, size: 18), label: Text(label), onPressed: onTap);
   }
@@ -403,27 +559,43 @@ class _DetailScreenState extends State<DetailScreen> {
           children: [
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 12),
-              child: Text(AppLocalizations.of(context).openWith, style: Theme.of(ctx).textTheme.titleSmall),
+              child: Text(AppLocalizations.of(context).openWith,
+                  style: Theme.of(ctx).textTheme.titleSmall),
             ),
             ListTile(
               leading: const Icon(Icons.open_in_new),
               title: Text(AppLocalizations.of(context).chooseApp),
               subtitle: Text(AppLocalizations.of(context).systemApp),
-              onTap: () { Navigator.pop(ctx); _openExternal(f); },
+              onTap: () {
+                Navigator.pop(ctx);
+                _openExternal(f);
+              },
             ),
             ListTile(
-              leading: const Icon(Icons.share), title: const Text('分享'),
+              leading: const Icon(Icons.share),
+              title: const Text('分享'),
               subtitle: const Text('通过系统分享发送'),
-              onTap: () { Navigator.pop(ctx); _shareFile(f); },
+              onTap: () {
+                Navigator.pop(ctx);
+                _shareFile(f);
+              },
             ),
             if (f.type == SharedFileType.text || f.textContent != null)
               ListTile(
-                leading: const Icon(Icons.content_copy), title: const Text('复制内容'),
-                onTap: () { Navigator.pop(ctx); _copyText(f); },
+                leading: const Icon(Icons.content_copy),
+                title: const Text('复制内容'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _copyText(f);
+                },
               ),
             ListTile(
-              leading: const Icon(Icons.content_paste), title: const Text('复制文件路径'),
-              onTap: () { Navigator.pop(ctx); _copyPath(f); },
+              leading: const Icon(Icons.content_paste),
+              title: const Text('复制文件路径'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _copyPath(f);
+              },
             ),
             const SizedBox(height: 8),
           ],
@@ -439,7 +611,8 @@ class _DetailScreenState extends State<DetailScreen> {
         _showSnack('打开失败: ${result.message}');
       }
     } else if (f.s3Key != null) {
-      final uri = Uri.parse('${ApiService.instance.baseUrl}${f.downloadUrl}?token=${ApiService.instance.token ?? ''}');
+      final uri = Uri.parse(
+          '${ApiService.instance.baseUrl}${f.downloadUrl}?token=${ApiService.instance.token ?? ''}');
       if (await canLaunchUrl(uri)) {
         await launchUrl(uri, mode: LaunchMode.externalApplication);
       } else {
@@ -464,20 +637,26 @@ class _DetailScreenState extends State<DetailScreen> {
 
   Future<void> _copyText(SharedFile f) async {
     final content = f.textContent ?? _textPreview;
-    if (content == null || content.isEmpty) { _showSnack('无文本内容可复制'); return; }
+    if (content == null || content.isEmpty) {
+      _showSnack('无文本内容可复制');
+      return;
+    }
     await Clipboard.setData(ClipboardData(text: content));
     if (mounted) _showSnack('文本已复制到剪贴板');
   }
 
   Future<void> _copyPath(SharedFile f) async {
-    if (f.localPath == null) { _showSnack('无文件路径'); return; }
+    if (f.localPath == null) {
+      _showSnack('无文件路径');
+      return;
+    }
     await Clipboard.setData(ClipboardData(text: f.localPath!));
     if (mounted) _showSnack('路径已复制');
   }
 
   void _showSnack(String msg) {
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(msg), duration: const Duration(seconds: 2)));
+    ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(msg), duration: const Duration(seconds: 2)));
   }
 
   // ======== Metadata ========
@@ -488,17 +667,23 @@ class _DetailScreenState extends State<DetailScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(AppLocalizations.of(context).detailInfo, style: theme.textTheme.titleSmall),
+          Text(AppLocalizations.of(context).detailInfo,
+              style: theme.textTheme.titleSmall),
           const SizedBox(height: 12),
           _metaRow(theme, AppLocalizations.of(context).fileName, f.name),
           _metaRow(theme, AppLocalizations.of(context).fileType, f.type.label),
           if (f.mimeType != null) _metaRow(theme, 'MIME', f.mimeType!),
-          if (f.fileSize > 0) _metaRow(theme, AppLocalizations.of(context).fileSize, _formatSize(f.fileSize)),
+          if (f.fileSize > 0)
+            _metaRow(theme, AppLocalizations.of(context).fileSize,
+                _formatSize(f.fileSize)),
           _metaRow(theme, AppLocalizations.of(context).receiveTime,
               DateFormat('yyyy-MM-dd HH:mm:ss').format(f.receivedAt)),
           if (f.localPath != null)
-            _metaRow(theme, AppLocalizations.of(context).localPath, f.localPath!, maxLines: 2),
-          if (f.sourceUri != null) _metaRow(theme, AppLocalizations.of(context).source, f.sourceUri!),
+            _metaRow(
+                theme, AppLocalizations.of(context).localPath, f.localPath!,
+                maxLines: 2),
+          if (f.sourceUri != null)
+            _metaRow(theme, AppLocalizations.of(context).source, f.sourceUri!),
         ],
       ),
     );
@@ -538,10 +723,10 @@ class _DetailScreenState extends State<DetailScreen> {
     return Container(
       height: 200,
       alignment: Alignment.center,
-      child: Icon(Icons.broken_image_outlined, size: 48, color: Colors.grey[400]),
+      child:
+          Icon(Icons.broken_image_outlined, size: 48, color: Colors.grey[400]),
     );
   }
-
 
   Future<void> _confirmDelete(SharedFile f) async {
     final ok = await showDialog<bool>(
@@ -576,13 +761,15 @@ class _DetailScreenState extends State<DetailScreen> {
 /// Loads S3 thumbnail via CachedNetworkImage, with action buttons.
 class _S3DetailImage extends StatelessWidget {
   final SharedFile file;
+
   const _S3DetailImage({required this.file});
 
   @override
   Widget build(BuildContext context) {
     final token = ApiService.instance.token;
     if (token == null || token.isEmpty) return _noPreview();
-    final thumbUrl = '${ApiService.instance.baseUrl}${file.thumbUrl}?token=$token';
+    final thumbUrl =
+        '${ApiService.instance.baseUrl}${file.thumbUrl}?token=$token';
 
     return Column(
       children: [
@@ -599,9 +786,7 @@ class _S3DetailImage extends StatelessWidget {
                 ),
                 errorWidget: (_, __, ___) => _noPreview(),
               ),
-              onTap: ()=>{
-                _openOriginal(context, file)
-              },
+              onTap: () => {_openOriginal(context, file)},
             ),
           ),
         ),
@@ -609,16 +794,19 @@ class _S3DetailImage extends StatelessWidget {
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            _actionBtn(context, Icons.open_in_new, '查看原图', () => _openOriginal(context, file)),
+            _actionBtn(context, Icons.open_in_new, '查看原图',
+                () => _openOriginal(context, file)),
             const SizedBox(width: 16),
-            _actionBtn(context, Icons.download, '保存到手机', () => _saveToGallery(context, file)),
+            _actionBtn(context, Icons.download, '保存到手机',
+                () => _saveToGallery(context, file)),
           ],
         ),
       ],
     );
   }
 
-  Widget _actionBtn(BuildContext context, IconData icon, String label, VoidCallback onTap) {
+  Widget _actionBtn(
+      BuildContext context, IconData icon, String label, VoidCallback onTap) {
     return OutlinedButton.icon(
       icon: Icon(icon, size: 18),
       label: Text(label, style: const TextStyle(fontSize: 13)),
@@ -633,13 +821,17 @@ class _S3DetailImage extends StatelessWidget {
     final token = ApiService.instance.token ?? '';
     final url = '${ApiService.instance.baseUrl}${f.downloadUrl}?token=$token';
     if (f.localPath != null && File(f.localPath!).existsSync()) {
-      await Navigator.push(context, MaterialPageRoute(
-        builder: (_) => _FullScreenImage(file: f, localPath: f.localPath!),
-      ));
+      await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => _FullScreenImage(file: f, localPath: f.localPath!),
+          ));
     } else if (f.s3Key != null) {
-      await Navigator.push(context, MaterialPageRoute(
-        builder: (_) => _FullScreenImage(file: f, imageUrl: url),
-      ));
+      await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => _FullScreenImage(file: f, imageUrl: url),
+          ));
     }
   }
 
@@ -648,8 +840,12 @@ class _S3DetailImage extends StatelessWidget {
     try {
       final token = ApiService.instance.token ?? '';
       final url = '${ApiService.instance.baseUrl}${f.downloadUrl}?token=$token';
-      final resp = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 30));
-      if (resp.statusCode != 200) { _showSnack(context, '下载失败'); return; }
+      final resp =
+          await http.get(Uri.parse(url)).timeout(const Duration(seconds: 30));
+      if (resp.statusCode != 200) {
+        _showSnack(context, '下载失败');
+        return;
+      }
 
       final dir = await getTemporaryDirectory();
       final tmpFile = File('${dir.path}/${f.name}');
@@ -674,7 +870,8 @@ class _S3DetailImage extends StatelessWidget {
     return Container(
       height: 200,
       alignment: Alignment.center,
-      child: Icon(Icons.broken_image_outlined, size: 48, color: Colors.grey[400]),
+      child:
+          Icon(Icons.broken_image_outlined, size: 48, color: Colors.grey[400]),
     );
   }
 }
@@ -725,7 +922,8 @@ class _FullScreenImage extends StatelessWidget {
             child: CircularProgressIndicator(color: Colors.white),
           ),
           errorBuilder: (_, __, ___) => const Center(
-            child: Icon(Icons.broken_image_outlined, size: 64, color: Colors.white38),
+            child: Icon(Icons.broken_image_outlined,
+                size: 64, color: Colors.white38),
           ),
         ),
       ),
@@ -738,12 +936,15 @@ class _FullScreenImage extends StatelessWidget {
     );
     try {
       final token = ApiService.instance.token ?? '';
-      final url = '${ApiService.instance.baseUrl}${file.downloadUrl}?token=$token';
-      final resp = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 30));
+      final url =
+          '${ApiService.instance.baseUrl}${file.downloadUrl}?token=$token';
+      final resp =
+          await http.get(Uri.parse(url)).timeout(const Duration(seconds: 30));
       if (resp.statusCode != 200) {
-        if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('下载失败')),
-        );
+        if (context.mounted)
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('下载失败')),
+          );
         return;
       }
 
@@ -754,15 +955,19 @@ class _FullScreenImage extends StatelessWidget {
       final result = await OpenFilex.open(tmpFile.path);
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(
-            result.type == ResultType.done ? '已保存到临时目录' : '保存失败: ${result.message}',
+          SnackBar(
+              content: Text(
+            result.type == ResultType.done
+                ? '已保存到临时目录'
+                : '保存失败: ${result.message}',
           )),
         );
       }
     } catch (e) {
-      if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('保存失败: $e')),
-      );
+      if (context.mounted)
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('保存失败: $e')),
+        );
     }
   }
 }

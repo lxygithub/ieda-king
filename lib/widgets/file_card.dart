@@ -92,7 +92,7 @@ class FileCard extends StatelessWidget {
                               mainAxisSize: MainAxisSize.min,
                               children: [
                                 HighlightedText(
-                                  text: file.name,
+                                  text: (file.title != null && file.title!.isNotEmpty) ? file.title! : file.name,
                                   query: query,
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,

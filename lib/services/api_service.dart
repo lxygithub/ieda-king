@@ -365,6 +365,58 @@ class ApiService {
     }
   }
 
+  // ========== Metadata Update ==========
+
+  /// Update file tags, title and/or description on the server.
+  Future<void> updateFileMetadata({
+    required String fileId,
+    List<String>? tags,
+    String? title,
+    String? description,
+  }) async {
+    final url = '$baseUrl/api/files/update-metadata';
+    final request = http.MultipartRequest('POST', Uri.parse(url));
+    if (token != null) request.headers['Authorization'] = 'Bearer $token';
+    request.fields['file_id'] = fileId;
+    if (tags != null) {
+      request.fields['tags'] = jsonEncode(tags);
+    }
+    if (title != null) {
+      request.fields['title'] = title;
+    }
+    if (description != null) {
+      request.fields['description'] = description;
+    }
+
+    final resp = await http.Response.fromStream(
+      await request.send().timeout(const Duration(seconds: 15)),
+    );
+    _checkAuth(resp);
+    if (resp.statusCode != 200) {
+      throw ApiException(resp.statusCode, _detail(resp));
+    }
+  }
+
+  /// Update file text content on the server.
+  Future<void> updateTextContent({
+    required String fileId,
+    required String content,
+  }) async {
+    final url = '$baseUrl/api/files/update-text';
+    final request = http.MultipartRequest('POST', Uri.parse(url));
+    if (token != null) request.headers['Authorization'] = 'Bearer $token';
+    request.fields['file_id'] = fileId;
+    request.fields['content'] = content;
+
+    final resp = await http.Response.fromStream(
+      await request.send().timeout(const Duration(seconds: 30)),
+    );
+    _checkAuth(resp);
+    if (resp.statusCode != 200) {
+      throw ApiException(resp.statusCode, _detail(resp));
+    }
+  }
+
   // ========== Helpers ==========
 
   /// Throw [TokenExpiredException] on 401 so the caller can redirect to login.

@@ -22,7 +22,8 @@ class AuthProvider extends ChangeNotifier {
   String? get error => _error;
   String? _error;
 
-  /// Load persisted token from SharedPreferences. Verify in background.
+  /// Load persisted token from MMKV. Returns immediately after local load.
+  /// Token verification happens in background via [verifyToken].
   Future<void> init() async {
     _isLoading = true;
     notifyListeners();
@@ -47,20 +48,26 @@ class AuthProvider extends ChangeNotifier {
       _initialized = true;
       notifyListeners();
     }
-    // Verify token in background (non-blocking)
+    // Verify token in background (non-blocking, after UI is shown)
     if (_token != null) {
-      try {
-        await ApiService.instance.getFiles();
-      } on TokenExpiredException {
-        _token = null;
-        _userId = null;
-        _username = null;
-        _isAdmin = false;
-        ApiService.instance.token = null;
-        await _persist();
-        notifyListeners();
-      } catch (_) {}
+      verifyToken();
     }
+  }
+
+  /// Verify token validity in background. Called after init() completes.
+  Future<void> verifyToken() async {
+    if (_token == null) return;
+    try {
+      await ApiService.instance.getFiles();
+    } on TokenExpiredException {
+      _token = null;
+      _userId = null;
+      _username = null;
+      _isAdmin = false;
+      ApiService.instance.token = null;
+      await _persist();
+      notifyListeners();
+    } catch (_) {}
   }
 
   Future<void> _persist() async {

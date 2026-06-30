@@ -26,31 +26,12 @@ void main() async {
   ));
   await MMKV.initialize();
 
-  // Init foreground task notification channel
-  FlutterForegroundTask.init(
-    androidNotificationOptions: AndroidNotificationOptions(
-      channelId: 'idea_king_upload',
-      channelName: 'File Upload',
-      channelDescription: 'Shows file upload progress',
-      channelImportance: NotificationChannelImportance.LOW,
-      priority: NotificationPriority.LOW,
-    ),
-    iosNotificationOptions: const IOSNotificationOptions(
-      showNotification: false,
-    ),
-    foregroundTaskOptions: ForegroundTaskOptions(
-      eventAction: ForegroundTaskEventAction.nothing(),
-      autoRunOnBoot: false,
-      allowWifiLock: true,
-    ),
-  );
-
-  // Init API base
+  // Init API base (quick, no network)
   ApiService.instance.baseUrl = _apiBaseUrl;
 
-  // Init auth (load persisted token)
+  // Init auth (load persisted token from local storage only, no network)
   final authProvider = AuthProvider();
-  await authProvider.init();
+  await authProvider.init(); // Returns immediately after loading local token
 
   runApp(
     MultiProvider(
@@ -61,6 +42,28 @@ void main() async {
       child: const ShareTimelineApp(),
     ),
   );
+
+  // Init foreground task after UI is shown (non-blocking)
+  // ignore: invalid_use_of_visible_for_testing_member
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    FlutterForegroundTask.init(
+      androidNotificationOptions: AndroidNotificationOptions(
+        channelId: 'idea_king_upload',
+        channelName: 'File Upload',
+        channelDescription: 'Shows file upload progress',
+        channelImportance: NotificationChannelImportance.LOW,
+        priority: NotificationPriority.LOW,
+      ),
+      iosNotificationOptions: const IOSNotificationOptions(
+        showNotification: false,
+      ),
+      foregroundTaskOptions: ForegroundTaskOptions(
+        eventAction: ForegroundTaskEventAction.nothing(),
+        autoRunOnBoot: false,
+        allowWifiLock: true,
+      ),
+    );
+  });
 }
 
 class ShareTimelineApp extends StatelessWidget {

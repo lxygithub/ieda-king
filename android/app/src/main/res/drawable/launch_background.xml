@@ -1,9 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
 <layer-list xmlns:android="http://android.com">
-    <item android:drawable="#F5F5F5" /> <!-- 背景色 -->
-    <item>
-        <bitmap
-            android:gravity="center"
-            android:src="@drawable/launch_image" /> <!-- 你的启动图 -->
-    </item>
+    <item android:drawable="@drawable/launch_background_with_logo" />
 </layer-list>

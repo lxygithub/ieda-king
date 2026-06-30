@@ -204,15 +204,41 @@ class TimelineProvider extends ChangeNotifier {
 
   // ===== Update metadata =====
 
-  void updateTags(String fileId, List<String> tags) {
+  Future<void> updateTitle(String fileId, String? title) async {
+    final idx = _files.indexWhere((f) => f.id == fileId);
+    if (idx == -1) return;
+    _files[idx] = _files[idx].copyWith(
+      title: title,
+      clearTitle: title == null || title.isEmpty,
+    );
+    _persist();
+    notifyListeners();
+    // Sync to server
+    try {
+      await ApiService.instance.updateFileMetadata(
+        fileId: fileId,
+        title: title ?? '',
+      );
+    } catch (e) {
+      debugPrint('[API] updateTitle error: $e');
+    }
+  }
+
+  Future<void> updateTags(String fileId, List<String> tags) async {
     final idx = _files.indexWhere((f) => f.id == fileId);
     if (idx == -1) return;
     _files[idx] = _files[idx].copyWith(tags: tags);
     _persist();
     notifyListeners();
+    // Sync to server
+    try {
+      await ApiService.instance.updateFileMetadata(fileId: fileId, tags: tags);
+    } catch (e) {
+      debugPrint('[API] updateTags error: $e');
+    }
   }
 
-  void updateDescription(String fileId, String? description) {
+  Future<void> updateDescription(String fileId, String? description) async {
     final idx = _files.indexWhere((f) => f.id == fileId);
     if (idx == -1) return;
     _files[idx] = _files[idx].copyWith(
@@ -221,6 +247,32 @@ class TimelineProvider extends ChangeNotifier {
     );
     _persist();
     notifyListeners();
+    // Sync to server
+    try {
+      await ApiService.instance.updateFileMetadata(
+        fileId: fileId,
+        description: description ?? '',
+      );
+    } catch (e) {
+      debugPrint('[API] updateDescription error: $e');
+    }
+  }
+
+  Future<void> updateTextContent(String fileId, String content) async {
+    final idx = _files.indexWhere((f) => f.id == fileId);
+    if (idx == -1) return;
+    _files[idx] = _files[idx].copyWith(textContent: content);
+    _persist();
+    notifyListeners();
+    // Sync to server
+    try {
+      await ApiService.instance.updateTextContent(
+        fileId: fileId,
+        content: content,
+      );
+    } catch (e) {
+      debugPrint('[API] updateTextContent error: $e');
+    }
   }
 
   /// Get unique tags across all files (sorted by frequency desc)
@@ -613,32 +665,50 @@ class TimelineProvider extends ChangeNotifier {
       }
     }
     mmkv.encodeString('local_paths', jsonEncode(localPaths));
+    // Also cache file list for faster startup
+    if (_files.isNotEmpty) {
+      final fileList = _files.map((f) => f.toJson()).toList();
+      mmkv.encodeString('cached_files', jsonEncode(fileList));
+      mmkv.encodeInt('cached_files_count', _totalCount);
+    }
   }
 
   Future<void> loadFromDisk() async {
     if (_initialized) return;
     _initialized = true;
 
-    // Restore persisted localPaths into current _files before API fetch
     final mmkv = MMKV.defaultMMKV();
+
+    // Load cached file list for instant display
+    final cachedFilesJson = mmkv.decodeString('cached_files');
+    if (cachedFilesJson != null && cachedFilesJson.isNotEmpty) {
+      try {
+        final List<dynamic> fileList = jsonDecode(cachedFilesJson);
+        _files = fileList.map((j) => SharedFile.fromJson(j as Map<String, dynamic>)).toList();
+        _totalCount = mmkv.decodeInt('cached_files_count') ?? _files.length;
+        notifyListeners();
+      } catch (_) {}
+    }
+
+    // Restore persisted localPaths into current _files
     final saved = mmkv.decodeString('local_paths');
     if (saved != null && saved.isNotEmpty) {
       try {
         final map = jsonDecode(saved) as Map<String, dynamic>;
         for (final entry in map.entries) {
           if (entry.value != null) {
-            // Set localPath on any matching file already in _files
             final idx = _files.indexWhere((f) => f.id == entry.key);
             if (idx >= 0 && _files[idx].localPath == null) {
               _files[idx] = _files[idx].copyWith(localPath: entry.value as String);
             }
           }
         }
+        notifyListeners();
       } catch (_) {}
     }
 
-    // Fetch from API on startup
-    await fetchFromApi();
+    // Fetch fresh data from API in background (non-blocking)
+    fetchFromApi();
   }
 
   /// Fetch first page from API, replace local cache.

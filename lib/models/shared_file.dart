@@ -49,6 +49,7 @@ extension SharedFileTypeX on SharedFileType {
 class SharedFile {
   final String id;
   final String name;
+  final String? title;
   final SharedFileType type;
   final String? localPath;
   final String? textContent;
@@ -68,6 +69,7 @@ class SharedFile {
   const SharedFile({
     required this.id,
     required this.name,
+    this.title,
     required this.type,
     this.localPath,
     this.textContent,
@@ -96,6 +98,7 @@ class SharedFile {
   /// All searchable text for this file
   String get searchableText {
     final parts = <String>[name];
+    if (title != null && title!.isNotEmpty) parts.add(title!);
     if (description != null) parts.add(description!);
     parts.addAll(tags);
     if (textContent != null) {
@@ -107,7 +110,9 @@ class SharedFile {
   }
 
   SharedFile copyWith({
+    String? title,
     String? localPath,
+    String? textContent,
     List<String>? tags,
     String? description,
     String? s3Key,
@@ -116,6 +121,7 @@ class SharedFile {
     String? uploadError,
     String? uploadId,
     String? uploadedParts,
+    bool clearTitle = false,
     bool clearDescription = false,
     bool clearS3Key = false,
     bool clearUploadProgress = false,
@@ -125,9 +131,10 @@ class SharedFile {
       SharedFile(
         id: id,
         name: name,
+        title: clearTitle ? null : (title ?? this.title),
         type: type,
         localPath: localPath ?? this.localPath,
-        textContent: textContent,
+        textContent: textContent ?? this.textContent,
         sourceUri: sourceUri,
         receivedAt: receivedAt,
         mimeType: mimeType,
@@ -145,6 +152,7 @@ class SharedFile {
   Map<String, dynamic> toJson() => {
         'id': id,
         'name': name,
+        'title': title,
         'type': type.name,
         'localPath': localPath,
         'textContent': textContent,
@@ -166,6 +174,7 @@ class SharedFile {
   Map<String, dynamic> toSyncJson() => {
         'id': id,
         'name': name,
+        'title': title,
         'type': type.name,
         'localPath': localPath,
         'textContent': textContent,
@@ -181,6 +190,7 @@ class SharedFile {
   factory SharedFile.fromJson(Map<String, dynamic> json) => SharedFile(
         id: json['id'] as String,
         name: json['name'] as String,
+        title: json['title'] as String?,
         type: SharedFileType.values.byName(json['type'] as String),
         localPath: json['localPath'] as String?,
         textContent: json['textContent'] as String?,
