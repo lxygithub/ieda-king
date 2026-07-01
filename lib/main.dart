@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
-import 'package:mmkv/mmkv.dart';
 import 'package:provider/provider.dart';
 import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 
@@ -13,6 +12,7 @@ import 'screens/login_screen.dart';
 import 'screens/register_screen.dart';
 import 'screens/timeline_screen.dart';
 import 'services/api_service.dart';
+import 'services/storage_service.dart';
 
 const _apiBaseUrl = 'http://192.227.212.20:18900';
 
@@ -24,7 +24,7 @@ void main() async {
     statusBarIconBrightness: Brightness.dark,
     statusBarBrightness: Brightness.light,
   ));
-  await MMKV.initialize();
+  await StorageService.instance.initialize();
 
   // Init API base (quick, no network)
   ApiService.instance.baseUrl = _apiBaseUrl;

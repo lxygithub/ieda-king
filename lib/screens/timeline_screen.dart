@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
-import 'package:mmkv/mmkv.dart';
 
 import '../l10n/app_localizations.dart';
 import '../models/shared_file.dart';
 import '../providers/timeline_provider.dart';
+import '../services/storage_service.dart';
 import '../widgets/day_group.dart';
 import '../widgets/draggable_fab.dart';
 import '../widgets/file_card_grid.dart';
@@ -43,17 +43,17 @@ class _TimelineScreenState extends State<TimelineScreen> {
   }
 
   Future<void> _loadViewPref() async {
-    final mmkv = MMKV.defaultMMKV();
+    final storage = StorageService.instance;
     if (mounted) {
-      setState(() => _isGridView = mmkv.decodeBool('grid_view') ?? false);
+      setState(() => _isGridView = storage.decodeBool('grid_view') ?? false);
     }
   }
 
   Future<void> _toggleView() async {
     final newVal = !_isGridView;
     setState(() => _isGridView = newVal);
-    final mmkv = MMKV.defaultMMKV();
-    mmkv.encodeBool('grid_view', newVal);
+    final storage = StorageService.instance;
+    storage.encodeBool('grid_view', newVal);
   }
 
   void _openDetail(SharedFile file) {

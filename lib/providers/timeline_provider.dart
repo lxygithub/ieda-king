@@ -3,11 +3,11 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
-import 'package:mmkv/mmkv.dart';
 
 import '../models/shared_file.dart';
 import '../services/api_service.dart';
 import '../services/foreground_task_handler.dart';
+import '../services/storage_service.dart';
 import '../utils/file_handler.dart';
 
 class TimelineProvider extends ChangeNotifier {
@@ -524,13 +524,13 @@ class TimelineProvider extends ChangeNotifier {
 
       // Large files: chunked upload with resume
       final api = ApiService.instance;
-      final mmkv = MMKV.defaultMMKV();
+      final storage = StorageService.instance;
       final uploadKey = 'upload_id_${file.id}';
       final fileSizeMb = (fileSize / 1048576).toStringAsFixed(1);
       debugPrint('[chunk] start: ${file.name} size=${fileSizeMb}MB id=${file.id}');
 
       // Try to resume existing upload
-      var uploadId = mmkv.decodeString(uploadKey);
+      var uploadId = storage.decodeString(uploadKey);
       Set<int> doneParts = {};
 
       if (uploadId != null) {
@@ -554,7 +554,7 @@ class TimelineProvider extends ChangeNotifier {
         );
         uploadId = init['upload_id'] as String;
         _uploadingIds[file.id] = uploadId;
-        mmkv.encodeString(uploadKey, uploadId);
+        storage.encodeString(uploadKey, uploadId);
         debugPrint('[chunk] init upload_id=$uploadId');
       }
       final totalChunks = (fileSize / _chunkSize).ceil();
@@ -614,7 +614,7 @@ class TimelineProvider extends ChangeNotifier {
 
       debugPrint('[chunk] completing upload...');
       final result = await api.completeMultipartUpload(uploadId);
-      mmkv.removeValue(uploadKey);
+      storage.removeValue(uploadKey);
       final curIdx = _fileIdx(file.id);
       if (curIdx >= 0) {
         _files[curIdx] = _files[curIdx].copyWith(s3Key: result['s3Key'], clearUploadProgress: true);
@@ -655,21 +655,21 @@ class TimelineProvider extends ChangeNotifier {
   }
 
   /// Sync all local files to server (manual sync button).
-  /// Persist localPath map in MMKV so restarts can re-upload pending files.
+  /// Persist localPath map in storage so restarts can re-upload pending files.
   Future<void> _persist() async {
-    final mmkv = MMKV.defaultMMKV();
+    final storage = StorageService.instance;
     final localPaths = <String, String>{};
     for (final f in _files) {
       if (f.localPath != null) {
         localPaths[f.id] = f.localPath!;
       }
     }
-    mmkv.encodeString('local_paths', jsonEncode(localPaths));
+    storage.encodeString('local_paths', jsonEncode(localPaths));
     // Also cache file list for faster startup
     if (_files.isNotEmpty) {
       final fileList = _files.map((f) => f.toJson()).toList();
-      mmkv.encodeString('cached_files', jsonEncode(fileList));
-      mmkv.encodeInt('cached_files_count', _totalCount);
+      storage.encodeString('cached_files', jsonEncode(fileList));
+      storage.encodeInt('cached_files_count', _totalCount);
     }
   }
 
@@ -677,21 +677,21 @@ class TimelineProvider extends ChangeNotifier {
     if (_initialized) return;
     _initialized = true;
 
-    final mmkv = MMKV.defaultMMKV();
+    final storage = StorageService.instance;
 
     // Load cached file list for instant display
-    final cachedFilesJson = mmkv.decodeString('cached_files');
+    final cachedFilesJson = storage.decodeString('cached_files');
     if (cachedFilesJson != null && cachedFilesJson.isNotEmpty) {
       try {
         final List<dynamic> fileList = jsonDecode(cachedFilesJson);
         _files = fileList.map((j) => SharedFile.fromJson(j as Map<String, dynamic>)).toList();
-        _totalCount = mmkv.decodeInt('cached_files_count') ?? _files.length;
+        _totalCount = storage.decodeInt('cached_files_count') ?? _files.length;
         notifyListeners();
       } catch (_) {}
     }
 
     // Restore persisted localPaths into current _files
-    final saved = mmkv.decodeString('local_paths');
+    final saved = storage.decodeString('local_paths');
     if (saved != null && saved.isNotEmpty) {
       try {
         final map = jsonDecode(saved) as Map<String, dynamic>;

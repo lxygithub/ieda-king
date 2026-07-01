@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:mmkv/mmkv.dart';
 
 import '../services/api_service.dart';
+import '../services/storage_service.dart';
 
 /// Manages authentication state: token, current user, login/logout/register.
 class AuthProvider extends ChangeNotifier {
@@ -22,17 +22,17 @@ class AuthProvider extends ChangeNotifier {
   String? get error => _error;
   String? _error;
 
-  /// Load persisted token from MMKV. Returns immediately after local load.
+  /// Load persisted token from storage. Returns immediately after local load.
   /// Token verification happens in background via [verifyToken].
   Future<void> init() async {
     _isLoading = true;
     notifyListeners();
     try {
-      final mmkv = MMKV.defaultMMKV();
-      _token = mmkv.decodeString('jwt_token');
-      _userId = mmkv.decodeInt('user_id');
-      _username = mmkv.decodeString('username');
-      _isAdmin = mmkv.decodeBool('is_admin') ?? false;
+      final storage = StorageService.instance;
+      _token = storage.decodeString('jwt_token');
+      _userId = storage.decodeInt('user_id');
+      _username = storage.decodeString('username');
+      _isAdmin = storage.decodeBool('is_admin') ?? false;
       ApiService.instance.token = _token;
       // Register token expiry callback
       ApiService.instance.onTokenExpired = () {
@@ -71,17 +71,17 @@ class AuthProvider extends ChangeNotifier {
   }
 
   Future<void> _persist() async {
-    final mmkv = MMKV.defaultMMKV();
+    final storage = StorageService.instance;
     if (_token != null) {
-      mmkv.encodeString('jwt_token', _token!);
-      mmkv.encodeInt('user_id', _userId!);
-      mmkv.encodeString('username', _username!);
-      mmkv.encodeBool('is_admin', _isAdmin);
+      storage.encodeString('jwt_token', _token!);
+      storage.encodeInt('user_id', _userId!);
+      storage.encodeString('username', _username!);
+      storage.encodeBool('is_admin', _isAdmin);
     } else {
-      mmkv.removeValue('jwt_token');
-      mmkv.removeValue('user_id');
-      mmkv.removeValue('username');
-      mmkv.removeValue('is_admin');
+      storage.removeValue('jwt_token');
+      storage.removeValue('user_id');
+      storage.removeValue('username');
+      storage.removeValue('is_admin');
     }
   }
 

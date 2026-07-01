@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:mmkv/mmkv.dart';
 
 import '../providers/auth_provider.dart';
 import '../services/api_service.dart';
+import '../services/storage_service.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -26,8 +26,8 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Future<void> _loadLastUsername() async {
-    final mmkv = MMKV.defaultMMKV();
-    final saved = mmkv.decodeString('last_username');
+    final storage = StorageService.instance;
+    final saved = storage.decodeString('last_username');
     if (saved != null && saved.isNotEmpty && mounted) {
       _usernameCtrl.text = saved;
       _passwordFocus.requestFocus();
@@ -43,8 +43,8 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Future<void> _saveLastUsername(String name) async {
-    final mmkv = MMKV.defaultMMKV();
-    mmkv.encodeString('last_username', name);
+    final storage = StorageService.instance;
+    storage.encodeString('last_username', name);
   }
 
   Future<void> _login() async {
