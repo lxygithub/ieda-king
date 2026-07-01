@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:intl/intl.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:path_provider/path_provider.dart';
@@ -17,6 +18,7 @@ import '../models/shared_file.dart';
 import '../providers/timeline_provider.dart';
 import '../services/api_service.dart';
 import '../utils/file_handler.dart';
+import 'markdown_view_screen.dart';
 import 'text_edit_screen.dart';
 
 class DetailScreen extends StatefulWidget {
@@ -157,6 +159,8 @@ class _DetailScreenState extends State<DetailScreen> {
         return _buildImagePreview(f);
       case SharedFileType.video:
         return _buildVideoCover(f);
+      case SharedFileType.markdown:
+        return _buildMarkdownPreview(theme, f);
       case SharedFileType.text:
         return _buildTextPreview(theme);
       default:
@@ -312,6 +316,91 @@ class _DetailScreenState extends State<DetailScreen> {
                   _textPreview!,
                   style: theme.textTheme.bodyMedium
                       ?.copyWith(fontFamily: 'monospace', height: 1.5),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMarkdownPreview(ThemeData theme, SharedFile f) {
+    if (_previewLoading) {
+      return const Padding(
+        padding: EdgeInsets.all(32),
+        child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+      );
+    }
+    if (_textPreview == null) return _noPreview();
+
+    return InkWell(
+      onTap: () async {
+        await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => MarkdownViewScreen(file: f),
+          ),
+        );
+        // Refresh after returning from edit screen
+        if (mounted) {
+          setState(() {
+            _previewLoading = true;
+          });
+          _loadPreview();
+        }
+      },
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(16),
+        constraints: const BoxConstraints(maxHeight: 300),
+        decoration: BoxDecoration(
+          border: Border.all(color: theme.colorScheme.outlineVariant),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.code, size: 16, color: theme.colorScheme.primary),
+                const SizedBox(width: 4),
+                Text(
+                  'Markdown - 点击查看',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.primary,
+                  ),
+                ),
+                const Spacer(),
+                Text(
+                  '${_textPreview!.length} 字',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Flexible(
+              child: Markdown(
+                data: _textPreview!,
+                selectable: false,
+                padding: EdgeInsets.zero,
+                shrinkWrap: true,
+                styleSheet: MarkdownStyleSheet(
+                  p: theme.textTheme.bodyMedium,
+                  h1: theme.textTheme.headlineMedium,
+                  h2: theme.textTheme.headlineSmall,
+                  h3: theme.textTheme.titleMedium,
+                  code: theme.textTheme.bodyMedium?.copyWith(
+                    fontFamily: 'monospace',
+                    backgroundColor: theme.colorScheme.surfaceContainerHighest,
+                  ),
+                  codeblockDecoration: BoxDecoration(
+                    color: theme.colorScheme.surfaceContainerHighest,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
                 ),
               ),
             ),

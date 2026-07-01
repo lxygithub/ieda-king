@@ -36,6 +36,7 @@ class AppLocalizations {
   // ===== File types =====
   String get typeImage => _isZh ? '图片' : 'Image';
   String get typeText => _isZh ? '文本' : 'Text';
+  String get typeMarkdown => 'Markdown';
   String get typeDocument => _isZh ? '文档' : 'Document';
   String get typeUrl => _isZh ? '链接' : 'Link';
   String get typeVideo => _isZh ? '视频' : 'Video';
@@ -48,6 +49,7 @@ class AppLocalizations {
     switch (type) {
       case SharedFileType.image: return typeImage;
       case SharedFileType.text: return typeText;
+      case SharedFileType.markdown: return typeMarkdown;
       case SharedFileType.document: return typeDocument;
       case SharedFileType.url: return typeUrl;
       case SharedFileType.video: return typeVideo;

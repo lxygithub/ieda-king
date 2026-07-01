@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-enum SharedFileType { image, text, document, url, video, audio, apk, other }
+enum SharedFileType { image, text, markdown, document, url, video, audio, apk, other }
 
 extension SharedFileTypeX on SharedFileType {
   String get label {
@@ -9,6 +9,8 @@ extension SharedFileTypeX on SharedFileType {
         return '图片';
       case SharedFileType.text:
         return '文本';
+      case SharedFileType.markdown:
+        return 'Markdown';
       case SharedFileType.document:
         return '文档';
       case SharedFileType.url:
@@ -30,6 +32,8 @@ extension SharedFileTypeX on SharedFileType {
         return Icons.image;
       case SharedFileType.text:
         return Icons.text_snippet;
+      case SharedFileType.markdown:
+        return Icons.code;
       case SharedFileType.document:
         return Icons.description;
       case SharedFileType.url:

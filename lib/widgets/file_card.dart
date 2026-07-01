@@ -347,6 +347,7 @@ class FileCard extends StatelessWidget {
     switch (file.type) {
       case SharedFileType.image: return Colors.green;
       case SharedFileType.text: return Colors.blue;
+      case SharedFileType.markdown: return Colors.teal;
       case SharedFileType.document: return Colors.orange;
       case SharedFileType.url: return Colors.indigo;
       case SharedFileType.video: return Colors.purple;
