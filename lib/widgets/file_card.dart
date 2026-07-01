@@ -325,9 +325,9 @@ class FileCard extends StatelessWidget {
       padding: const EdgeInsets.only(left: 6),
       child: GestureDetector(
         onTap: onRetry,
-        child: Tooltip(
+        child: const Tooltip(
           message: '等待上传',
-          child: const Icon(Icons.cloud_upload_outlined, size: 14, color: Colors.grey),
+          child: Icon(Icons.cloud_upload_outlined, size: 14, color: Colors.grey),
         ),
       ),
     );
