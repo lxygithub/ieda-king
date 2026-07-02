@@ -110,6 +110,11 @@ class AppLocalizations {
   String selected(int n) => _isZh ? '已选 $n 项' : '$n selected';
   String get batchDelete => _isZh ? '批量删除' : 'Batch delete';
   String batchDeleteConfirm(int n) => _isZh ? '从时间线移除选中的 $n 条记录？(本地文件保留)' : 'Remove $n records from timeline? (Local files kept)';
+  String get batchAddTag => _isZh ? '添加标签' : 'Add tags';
+  String batchAddTagConfirm(int n, int tagCount) =>
+      _isZh ? '为选中的 $n 个文件添加 $tagCount 个标签' : 'Add $tagCount tags to $n selected files';
+  String get batchAddTagHint => _isZh ? '输入标签名，回车确认。将追加到已有标签' : 'Enter tag name, press enter. Appended to existing tags';
+  String get batchAddTagSuccess => _isZh ? '标签已添加' : 'Tags added';
 
   // ===== Day delete =====
   String get deleteDayTitle => _isZh ? '删除当天记录' : 'Delete day records';

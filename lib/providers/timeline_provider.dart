@@ -238,6 +238,25 @@ class TimelineProvider extends ChangeNotifier {
     }
   }
 
+  /// Batch add tags to multiple files (additive, preserves existing tags).
+  Future<void> batchAddTags(List<String> fileIds, List<String> tagsToAdd) async {
+    if (tagsToAdd.isEmpty || fileIds.isEmpty) return;
+    for (final id in fileIds) {
+      final idx = _files.indexWhere((f) => f.id == id);
+      if (idx == -1) continue;
+      final existing = _files[idx].tags;
+      final merged = {...existing, ...tagsToAdd}.toList();
+      _files[idx] = _files[idx].copyWith(tags: merged);
+      try {
+        await ApiService.instance.updateFileMetadata(fileId: id, tags: merged);
+      } catch (e) {
+        debugPrint('[API] batchAddTags error: $e');
+      }
+    }
+    _persist();
+    notifyListeners();
+  }
+
   Future<void> updateDescription(String fileId, String? description) async {
     final idx = _files.indexWhere((f) => f.id == fileId);
     if (idx == -1) return;

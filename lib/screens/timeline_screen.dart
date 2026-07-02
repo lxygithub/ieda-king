@@ -108,6 +108,118 @@ class _TimelineScreenState extends State<TimelineScreen> {
     }
   }
 
+  void _showBatchTagEditor() {
+    if (_selectedIds.isEmpty) return;
+    final provider = context.read<TimelineProvider>();
+    // Collect union of all tags from selected files
+    final existingTags = <String>{};
+    for (final id in _selectedIds) {
+      final file = provider.files.firstWhere((f) => f.id == id, orElse: () => provider.files.first);
+      existingTags.addAll(file.tags);
+    }
+    final newTags = <String>{};
+    final ctrl = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) {
+          final l10n = AppLocalizations.of(context);
+          final theme = Theme.of(context);
+          final totalCount = _selectedIds.length;
+          return AlertDialog(
+            title: Text(l10n.batchAddTag),
+            content: SizedBox(
+              width: double.maxFinite,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Info text
+                  Text(l10n.batchAddTagConfirm(totalCount, newTags.length),
+                      style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant)),
+                  const SizedBox(height: 12),
+                  // Tag input
+                  TextField(
+                    controller: ctrl,
+                    autofocus: true,
+                    decoration: InputDecoration(
+                      hintText: l10n.batchAddTagHint,
+                      border: const OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                    onSubmitted: (val) {
+                      final tag = val.trim();
+                      if (tag.isNotEmpty && !existingTags.contains(tag) && !newTags.contains(tag)) {
+                        setDialogState(() => newTags.add(tag));
+                      }
+                      ctrl.clear();
+                    },
+                  ),
+                  // New tags to add
+                  if (newTags.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    Text(l10n.add, style: theme.textTheme.labelSmall?.copyWith(
+                        color: theme.colorScheme.primary)),
+                    const SizedBox(height: 4),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 4,
+                      children: newTags.map((t) => Chip(
+                        label: Text(t, style: const TextStyle(fontSize: 12)),
+                        backgroundColor: theme.colorScheme.primaryContainer,
+                        onDeleted: () => setDialogState(() => newTags.remove(t)),
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        visualDensity: VisualDensity.compact,
+                      )).toList(),
+                    ),
+                  ],
+                  // Existing tags (read-only, for reference)
+                  if (existingTags.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    Text(l10n.tagLabel, style: theme.textTheme.labelSmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant)),
+                    const SizedBox(height: 4),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 4,
+                      children: existingTags.map((t) => Chip(
+                        label: Text(t, style: const TextStyle(fontSize: 12)),
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        visualDensity: VisualDensity.compact,
+                      )).toList(),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: Text(l10n.cancel),
+              ),
+              FilledButton(
+                onPressed: newTags.isEmpty ? null : () async {
+                  Navigator.pop(ctx, newTags.toList());
+                },
+                child: Text(l10n.done),
+              ),
+            ],
+          );
+        },
+      ),
+    ).then((result) {
+      if (result != null && result is List<String> && result.isNotEmpty && mounted) {
+        final provider = context.read<TimelineProvider>();
+        provider.batchAddTags(_selectedIds.toList(), result);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(AppLocalizations.of(context).batchAddTagSuccess)),
+        );
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -204,31 +316,42 @@ class _TimelineScreenState extends State<TimelineScreen> {
   Widget _buildSelectionBar() {
     final theme = Theme.of(context);
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
         color: theme.colorScheme.surfaceContainerLow,
         border: Border(top: BorderSide(color: theme.colorScheme.outlineVariant)),
       ),
-      child: Row(
-        children: [
-          Text(AppLocalizations.of(context).selected(_selectedIds.length),
-              style: theme.textTheme.bodyMedium?.copyWith(
-                  fontWeight: FontWeight.w500,
-                  color: theme.colorScheme.onSurface)),
-          const Spacer(),
-          TextButton.icon(
-            icon: const Icon(Icons.clear, size: 18),
-            label: Text(AppLocalizations.of(context).cancel),
-            onPressed: _clearSelection,
-          ),
-          const SizedBox(width: 8),
-          FilledButton.icon(
-            icon: const Icon(Icons.delete_outline, size: 18),
-            label: Text(AppLocalizations.of(context).delete),
-            style: FilledButton.styleFrom(backgroundColor: theme.colorScheme.error),
-            onPressed: _deleteSelected,
-          ),
-        ],
+      child: SafeArea(
+        top: false,
+        child: Row(
+          children: [
+            Text(AppLocalizations.of(context).selected(_selectedIds.length),
+                style: theme.textTheme.bodyMedium?.copyWith(
+                    fontWeight: FontWeight.w500,
+                    color: theme.colorScheme.onSurface)),
+            const Spacer(),
+            IconButton(
+              icon: const Icon(Icons.close, size: 20),
+              tooltip: AppLocalizations.of(context).cancel,
+              onPressed: _clearSelection,
+              visualDensity: VisualDensity.compact,
+            ),
+            const SizedBox(width: 4),
+            IconButton(
+              icon: const Icon(Icons.label_outline, size: 20),
+              tooltip: AppLocalizations.of(context).batchAddTag,
+              onPressed: _showBatchTagEditor,
+              visualDensity: VisualDensity.compact,
+            ),
+            const SizedBox(width: 4),
+            IconButton(
+              icon: Icon(Icons.delete_outline, size: 20, color: theme.colorScheme.error),
+              tooltip: AppLocalizations.of(context).delete,
+              onPressed: _deleteSelected,
+              visualDensity: VisualDensity.compact,
+            ),
+          ],
+        ),
       ),
     );
   }
