@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.database import engine, Base
-from app.routers import admin, auth, files
+from app.routers import admin, admin_api, auth, files
 
 
 @asynccontextmanager
@@ -51,6 +51,7 @@ app.mount("/static", StaticFiles(directory="app/static"), name="static")
 app.include_router(auth.router)
 app.include_router(files.router)
 app.include_router(admin.router)
+app.include_router(admin_api.router)
 
 
 @app.get("/")
