@@ -14,7 +14,7 @@ const routes = [
     children: [
       {
         path: '',
-        redirect: '/dashboard',
+        redirect: { name: 'Dashboard' },
       },
       {
         path: 'dashboard',
@@ -41,7 +41,7 @@ const routes = [
 ]
 
 const router = createRouter({
-  history: createWebHistory(),
+  history: createWebHistory('/admin-new/'),
   routes,
 })
 
@@ -50,9 +50,9 @@ router.beforeEach((to, from, next) => {
   const isAuthenticated = localStorage.getItem('admin_user')
 
   if (to.meta.requiresAuth && !isAuthenticated) {
-    next('/login')
-  } else if (to.path === '/login' && isAuthenticated) {
-    next('/')
+    next({ name: 'Login' })
+  } else if (to.name === 'Login' && isAuthenticated) {
+    next({ name: 'Dashboard' })
   } else {
     next()
   }
