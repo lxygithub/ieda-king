@@ -1,6 +1,6 @@
 {% extends "base.html" %}
-{% block title %}文件管理{% endblock %}
-{% block page_title %}文件管理{% endblock %}
+{% block title %}{{ view_user.username }} - 用户详情{% endblock %}
+{% block page_title %}用户: {{ view_user.username }}{% endblock %}
 
 {% block extra_css %}
 
@@ -10,7 +10,6 @@
     .file-icon-audio { background: #e0e7ff; color: #4f46e5; }
     .file-icon-text { background: #e0f2fe; color: #0284c7; }
     .file-icon-pdf { background: #fee2e2; color: #dc2626; }
-    .file-icon-markdown { background: #ede9fe; color: #7c3aed; }
     .file-icon-default { background: #f3f4f6; color: #6b7280; }
     .file-icon-image { background: #d1fae5; color: #059669; }
     .type-badge { padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; }
@@ -18,41 +17,96 @@
     .type-video { background: #fef3c7; color: #92400e; }
     .type-audio { background: #e0e7ff; color: #3730a3; }
     .type-text { background: #e0f2fe; color: #075985; }
-    .type-markdown { background: #ede9fe; color: #6d28d9; }
-    .type-document { background: #dbeafe; color: #1e40af; }
-    .type-link { background: #fef3c7; color: #92400e; }
     .type-other { background: #f3f4f6; color: #374151; }
     .tag { display: inline-block; padding: 1px 6px; border-radius: 3px; background: #e0e7ff; color: #4f46e5; font-size: 10px; margin-right: 3px; }
     .dark-mode .tag { background: rgba(79,70,229,0.2); color: #818cf8; }
+    .file-name-cell { max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .table td { vertical-align: middle; }
     .batch-bar { display: none; padding: 10px 16px; background: #e0e7ff; border-radius: 8px; margin-bottom: 12px; }
     .dark-mode .batch-bar { background: rgba(79,70,229,0.2); }
     .batch-bar.visible { display: flex; align-items: center; gap: 12px; }
-    .file-name-cell { max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .table td { vertical-align: middle; }
+    .info-card { background: var(--bg-card, #fff); border-radius: 10px; padding: 20px; margin-bottom: 20px; border: 1px solid var(--border, #e5e7eb); }
+    .dark-mode .info-card { background: #0f3460; border-color: #2a2a4a; }
+
 {% endblock %}
 
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3">
-    <h5 class="text-muted mb-0">共 {{ files|length }} 个文件</h5>
+    <a href="/admin/users" class="btn btn-secondary btn-sm"><i class="fas fa-arrow-left mr-1"></i> 返回用户列表</a>
 </div>
 
-{% if request.query_params.get("deleted") %}
-<div class="alert alert-success alert-dismissible fade show">
-    <i class="fas fa-check-circle mr-1"></i> 已删除 {{ request.query_params.get("deleted") }} 个文件
-    <button type="button" class="close" data-dismiss="alert"><span>&times;</span></button>
+<div class="row mb-4" style="display:flex;align-items:stretch">
+    <div class="col-md-3" style="display:flex;flex-direction:column">
+        <div class="info-card text-center" style="flex:1;display:flex;flex-direction:column;justify-content:center;padding:24px 16px;margin-bottom:0">
+            <div style="width:72px;height:72px;border-radius:50%;background:linear-gradient(135deg,#6366f1,#8b5cf6);margin:0 auto 12px;display:flex;align-items:center;justify-content:center">
+                <i class="fas fa-user" style="font-size:32px;color:#fff"></i>
+            </div>
+            <h5 style="margin:0 0 8px;color:#e5e7eb;font-size:16px">{{ view_user.username }}</h5>
+            {% if view_user.is_admin %}
+            <span style="display:inline-block;padding:3px 10px;border-radius:12px;background:rgba(99,102,241,0.2);color:#818cf8;font-size:11px;font-weight:500"><i class="fas fa-crown mr-1"></i>管理员</span>
+            {% else %}
+            <span style="display:inline-block;padding:3px 10px;border-radius:12px;background:rgba(107,114,128,0.2);color:#9ca3af;font-size:11px;font-weight:500">普通用户</span>
+            {% endif %}
+        </div>
+    </div>
+    <div class="col-md-3" style="display:flex;flex-direction:column">
+        <div class="info-card" style="flex:1;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;padding:20px 16px;margin-bottom:0">
+            <div style="font-size:11px;color:#9ca3af;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px">用户 ID</div>
+            <div style="font-size:24px;font-weight:700;color:#e5e7eb">{{ view_user.id }}</div>
+        </div>
+    </div>
+    <div class="col-md-3" style="display:flex;flex-direction:column">
+        <div class="info-card" style="flex:1;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;padding:20px 16px;margin-bottom:0">
+            <div style="font-size:11px;color:#9ca3af;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px">注册时间</div>
+            <div style="font-size:14px;font-weight:600;color:#e5e7eb">{{ view_user.created_at.strftime("%Y-%m-%d") if view_user.created_at else "-" }}</div>
+            <div style="font-size:11px;color:#6b7280;margin-top:2px">{{ view_user.created_at.strftime("%H:%M") if view_user.created_at else "" }}</div>
+        </div>
+    </div>
+    <div class="col-md-3" style="display:flex;flex-direction:column">
+        <div class="info-card" style="flex:1;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;padding:20px 16px;margin-bottom:0">
+            <div style="font-size:11px;color:#9ca3af;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px">文件数量</div>
+            <div style="font-size:28px;font-weight:800;color:#6366f1">{{ files|length }}</div>
+        </div>
+    </div>
+</div>
+
+{% if request.session.get('admin_is_admin') %}
+<div class="row mb-4">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header"><i class="fas fa-key mr-1"></i> 修改密码</div>
+            <div class="card-body">
+                <form method="post" action="/admin/users/{{ view_user.id }}/change-password">
+                    <div class="input-group">
+                        <input type="password" class="form-control" name="new_password" placeholder="新密码(至少6位)" required minlength="6">
+                        <button type="submit" class="btn btn-primary"><i class="fas fa-check mr-1"></i> 确认</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+    {% if not view_user.is_admin %}
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header"><i class="fas fa-user-edit mr-1"></i> 修改用户名</div>
+            <div class="card-body">
+                <form method="post" action="/admin/users/{{ view_user.id }}/change-username">
+                    <div class="input-group">
+                        <input type="text" class="form-control" name="new_username" placeholder="新用户名(至少3位)" required minlength="3">
+                        <button type="submit" class="btn btn-primary"><i class="fas fa-check mr-1"></i> 确认</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+    {% endif %}
 </div>
 {% endif %}
 
-<div class="batch-bar" id="batchBar">
-    <span>已选 <strong id="selectedCount">0</strong> 项</span>
-    <form method="post" action="/admin/files/batch-delete" style="display:inline" id="batchForm" onsubmit="return confirmBatch()">
-        <input type="hidden" name="file_ids" id="batchIds">
-        <button type="submit" class="btn btn-danger btn-sm"><i class="fas fa-trash mr-1"></i> 批量删除</button>
-    </form>
-    <button class="btn btn-secondary btn-sm" onclick="clearSelection()">取消</button>
-</div>
-
 <div class="card">
+    <div class="card-header">
+        <h5 class="card-title mb-0"><i class="fas fa-folder-open mr-1"></i> 文件列表 ({{ files|length }})</h5>
+    </div>
     <div class="card-body p-0">
         <div class="table-responsive">
         <table class="table table-hover mb-0" id="file-table">
@@ -86,12 +140,6 @@
                         <div class="file-icon file-icon-audio"><i class="fas fa-music"></i></div>
                         {% elif f.type == "text" %}
                         <div class="file-icon file-icon-text"><i class="fas fa-file-alt"></i></div>
-                        {% elif f.type == "markdown" %}
-                        <div class="file-icon file-icon-markdown"><i class="fas fa-file-code"></i></div>
-                        {% elif f.type == "document" %}
-                        <div class="file-icon file-icon-text"><i class="fas fa-file-word"></i></div>
-                        {% elif f.type == "link" %}
-                        <div class="file-icon file-icon-default"><i class="fas fa-link"></i></div>
                         {% elif f.mimeType and f.mimeType.startswith("application/pdf") %}
                         <div class="file-icon file-icon-pdf"><i class="fas fa-file-pdf"></i></div>
                         {% else %}
@@ -102,7 +150,7 @@
                         <strong style="font-size:13px">{{ f.name }}</strong>
                     </td>
                     <td>
-                        {% set tc = "type-image" if f.type == "image" else "type-video" if f.type == "video" else "type-audio" if f.type == "audio" else "type-text" if f.type == "text" else "type-markdown" if f.type == "markdown" else "type-document" if f.type == "document" else "type-link" if f.type == "link" else "type-other" %}
+                        {% set tc = "type-image" if f.type == "image" else "type-video" if f.type == "video" else "type-audio" if f.type == "audio" else "type-text" if f.type == "text" else "type-other" %}
                         <span class="type-badge {{ tc }}">{{ f.type }}</span>
                     </td>
                     <td class="text-muted" style="font-size:12px">
@@ -195,7 +243,6 @@ document.addEventListener("DOMContentLoaded", function() {
 var currentSort = { field: 'time', asc: true };
 
 document.addEventListener('DOMContentLoaded', function() {
-    // Initial sort by time descending
     setTimeout(function() { sortBy('time'); }, 100);
 });
 

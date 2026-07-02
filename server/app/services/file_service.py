@@ -109,10 +109,19 @@ async def get_user_files(
 async def get_all_files(
     db: AsyncSession, user_id: int | None = None
 ) -> list[dict]:
-    """Admin: fetch files for a specific user."""
+    """Admin: fetch all files from all users, or files for a specific user."""
     if user_id:
         return await get_user_files(db, user_id)
-    return []
+    
+    # Get all users and fetch their files
+    from sqlalchemy import select
+    from app.models.user import User
+    users = await db.execute(select(User))
+    all_files = []
+    for u in users.scalars().all():
+        files = await get_user_files(db, u.id)
+        all_files.extend(files)
+    return all_files
 
 
 async def create_file(
@@ -211,6 +220,34 @@ async def clear_user_files(
     result = await db.execute(text(f"DELETE FROM {table} WHERE 1=1"))
     return result.rowcount or 0
 
+
+
+async def update_file_meta(
+    db: AsyncSession, file_id: str, name: str = None, tags: str = None
+):
+    from sqlalchemy import select
+    from app.models.user import User
+    users = await db.execute(select(User))
+    for user in users.scalars().all():
+        table = _table_name(user.id)
+        try:
+            result = await db.execute(text(f"SELECT id FROM {table} WHERE id = :id"), {"id": file_id})
+            if result.fetchone():
+                updates = []
+                params = {"id": file_id}
+                if name is not None:
+                    updates.append("name = :name")
+                    params["name"] = name
+                if tags is not None:
+                    updates.append("tags = :tags")
+                    params["tags"] = tags
+                if updates:
+                    set_clause = ", ".join(updates)
+                    await db.execute(text(f"UPDATE {table} SET {set_clause} WHERE id = :id"), params)
+                return True
+        except Exception:
+            continue
+    return False
 
 async def count_user_files(
     db: AsyncSession, user_id: int, start_date: str | None = None, end_date: str | None = None,

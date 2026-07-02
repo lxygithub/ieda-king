@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}用户管理{% endblock %}
+{% block page_title %}用户管理{% endblock %}
+
+{% block content %}
+<div class="row mb-3">
+    <div class="col-md-6">
+        <details class="card">
+            <summary class="card-header" style="cursor:pointer"><i class="fas fa-plus-circle mr-1 text-success"></i> 创建新用户</summary>
+            <div class="card-body">
+                <form method="post" action="/admin/users/create">
+                    <div class="row">
+                        <div class="col-md-4">
+                            <div class="form-group">
+                                <label>用户名</label>
+                                <input type="text" class="form-control" name="username" required>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="form-group">
+                                <label>密码</label>
+                                <input type="password" class="form-control" name="password" required>
+                            </div>
+                        </div>
+                        <div class="col-md-4 d-flex align-items-end">
+                            <div class="form-check mb-2 mr-3">
+                                <input type="checkbox" class="form-check-input" name="is_admin" id="isAdmin">
+                                <label class="form-check-label" for="isAdmin">管理员</label>
+                            </div>
+                            <button type="submit" class="btn btn-success"><i class="fas fa-plus mr-1"></i> 创建</button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </details>
+    </div>
+</div>
+
+{% if request.query_params.get("error") == "username_exists" %}
+<div class="alert alert-danger"><i class="fas fa-exclamation-circle mr-1"></i> 用户名已存在</div>
+{% endif %}
+
+<div class="card">
+    <div class="card-header">
+        <h5 class="card-title mb-0"><i class="fas fa-users mr-1"></i> 用户列表</h5>
+    </div>
+    <div class="card-body p-0">
+        <table class="table table-hover">
+            <thead>
+                <tr>
+                    <th style="width:60px">#</th>
+                    <th>用户名</th>
+                    <th>角色</th>
+                    <th>创建时间</th>
+                    <th style="width:150px">操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for u in users %}
+                <tr>
+                    <td><span class="badge bg-secondary">{{ loop.index }}</span></td>
+                    <td><strong>{{ u.username }}</strong></td>
+                    <td>
+                        {% if u.is_admin %}
+                        <span class="badge bg-primary"><i class="fas fa-crown mr-1"></i>管理员</span>
+                        {% else %}
+                        <span class="badge bg-light text-dark">普通用户</span>
+                        {% endif %}
+                    </td>
+                    <td class="text-muted" style="font-size:13px">{{ u.created_at.strftime("%Y-%m-%d %H:%M") if u.created_at else "-" }}</td>
+                    <td>
+                        <div class="btn-group btn-group-sm">
+                            <a href="/admin/users/{{ u.id }}" class="btn btn-outline-primary" title="查看详情"><i class="fas fa-folder-open"></i></a>
+                            <form method="post" action="/admin/users/{{ u.id }}/delete" style="display:inline" onsubmit="return confirm(确定删除用户 {{ u.username }}?)">
+                                <button type="submit" class="btn btn-outline-danger" title="删除" {% if u.id == admin_user_id %}disabled{% endif %}><i class="fas fa-trash"></i></button>
+                            </form>
+                        </div>
+                    </td>
+                </tr>
+                {% else %}
+                <tr><td colspan="5" class="text-center text-muted py-4">暂无用户</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
