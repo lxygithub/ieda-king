@@ -31,14 +31,18 @@ app = FastAPI(
 app.add_middleware(
     SessionMiddleware,
     secret_key=settings.admin_session_secret,
-    same_site="lax",
+    same_site="none",
+    https_only=True,
 )
 
 
 # CORS middleware for web app
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "https://idea-king.ieop.top",
+        "http://localhost:5173",  # dev
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
