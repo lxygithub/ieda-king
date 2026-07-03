@@ -14,7 +14,7 @@ import 'screens/timeline_screen.dart';
 import 'services/api_service.dart';
 import 'services/storage_service.dart';
 
-const _apiBaseUrl = 'http://192.227.212.20:18900';
+const _apiBaseUrl = 'https://idea-king-api.ieop.top';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
