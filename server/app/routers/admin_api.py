@@ -16,17 +16,13 @@ router = APIRouter(prefix="/api/admin", tags=["admin-api"])
 
 # ===== Auth =====
 
-def _get_admin_user(request: Request, db: AsyncSession) -> User:
+async def _get_admin_user(request: Request, db: AsyncSession) -> User:
     """Get current admin user from session. Raises 401 if not authenticated."""
     uid = request.session.get("admin_user_id")
     if uid is None:
         raise HTTPException(status_code=401, detail="Not authenticated")
-    result = db.execute(select(User).where(User.id == uid))
-    # For sync compatibility
-    import asyncio
-    if asyncio.iscoroutine(result):
-        result = asyncio.get_event_loop().run_until_complete(result)
-    user = result.scalar_one_or_none() if hasattr(result, 'scalar_one_or_none') else None
+    result = await db.execute(select(User).where(User.id == uid))
+    user = result.scalar_one_or_none()
     if not user:
         request.session.clear()
         raise HTTPException(status_code=401, detail="User not found")
